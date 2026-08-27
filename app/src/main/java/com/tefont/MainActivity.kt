@@ -101,6 +101,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var shareBar: LinearLayout
     private lateinit var outputCardArea: LinearLayout
 
+    // 生成页向导步骤
+    private val wizardScrolls = mutableListOf<ScrollView>()
+    private var pageDots: List<TextView> = emptyList()
+    private var btnPrevPage: MaterialButton? = null
+    private var btnNextPage: MaterialButton? = null
+    private var currentPage = 0
+
     // 设置页控件
     private lateinit var themeGroup: RadioGroup
     private lateinit var authorPrefEdit: TextInputEditText
@@ -183,19 +190,25 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(20), 0, dp(20), dp(16))
         })
 
-        // ── 生成页容器 ──
-        val generatePage = ScrollView(this).apply {
+        // ── 生成页容器（向导步骤页在此切换）──
+        // ── 生成页 = 三步向导 ──
+        fun newWizScroll(): ScrollView = ScrollView(this).apply {
             overScrollMode = View.OVER_SCROLL_NEVER
-            visibility = View.VISIBLE
+            visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
-        }
-        val genColumn = LinearLayout(this).apply {
+        }.also { wizardScrolls.add(it) }
+        fun wizColumn(): LinearLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), 0, dp(20), dp(8))
         }
-        generatePage.addView(genColumn)
+        val genColumn = wizColumn()
+        val slotsColumn = wizColumn()
+        val outputColumn = wizColumn().apply { setPadding(dp(20), 0, dp(20), dp(8)) }
+        newWizScroll().addView(genColumn)
+        newWizScroll().addView(slotsColumn)
+        newWizScroll().addView(outputColumn)
 
         // ── 设置页容器 ──
         val settingsPage = ScrollView(this).apply {
@@ -265,7 +278,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        genColumn.addView(card { add ->
+        slotsColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("生成配置"))
             SLOTS.forEachIndexed { i, s ->
@@ -303,7 +316,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        genColumn.addView(card { add ->
+        outputColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("字体包信息"))
             nameInput = inputField(box, "包名称（留空 = 跟随字体文件名）")
@@ -312,7 +325,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        genColumn.addView(card(bgRes = R.color.md_primary_container) { add ->
+        outputColumn.addView(card(bgRes = R.color.md_primary_container) { add ->
             outputCardArea = innerColumn()
             progressIndicator = LinearProgressIndicator(this@MainActivity).apply {
                 max = 100
@@ -399,6 +412,43 @@ class MainActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
         ) })
 
+        // ---------- 向导底部步骤栏 ----------
+        val wizardFooter = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(4) }
+        }
+        val navRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        btnPrevPage = bannerButton("← 上一步", filled = false) { setPage(currentPage - 1) }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6); topMargin = 0 }
+        }
+        btnNextPage = bannerButton("下一步 →", filled = true) { setPage(currentPage + 1) }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { topMargin = 0 }
+        }
+        navRow.addView(btnPrevPage)
+        navRow.addView(btnNextPage)
+
+        val dotsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        pageDots = wizardScrolls.map {
+            TextView(this).apply {
+                text = "●"
+                textSize = 11f
+                setTextColor(colorOf(R.color.md_surface_variant))
+                setPadding(dp(4), 0, dp(4), 0)
+            }.also(dotsRow::addView)
+        }
+        wizardFooter.addView(navRow)
+        wizardFooter.addView(dotsRow)
+
         // ---------- 底部导航 ----------
 
         val nav = BottomNavigationView(this).apply {
@@ -415,12 +465,14 @@ class MainActivity : AppCompatActivity() {
             setOnItemSelectedListener { item ->
                 when (item.itemId) {
                     ID_TAB_GENERATE -> {
-                        generatePage.visibility = View.VISIBLE
+                        wizardScrolls.forEachIndexed { i, sc -> sc.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
+                        wizardFooter.visibility = View.VISIBLE
                         settingsPage.visibility = View.GONE
                         true
                     }
                     else -> {
-                        generatePage.visibility = View.GONE
+                        wizardScrolls.forEach { it.visibility = View.GONE }
+                        wizardFooter.visibility = View.GONE
                         settingsPage.visibility = View.VISIBLE
                         true
                     }
@@ -428,11 +480,30 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        column.addView(generatePage)
+        wizardScrolls.forEach { column.addView(it) }
+        column.addView(wizardFooter)
         column.addView(settingsPage)
         column.addView(nav)
 
         setContentView(column)
+        setPage(0)
+    }
+
+    private fun setPage(index: Int) {
+        currentPage = index.coerceIn(0, wizardScrolls.lastIndex)
+        wizardScrolls.forEachIndexed { i, sc -> sc.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
+        btnPrevPage?.visibility = if (currentPage == 0) View.INVISIBLE else View.VISIBLE
+        if (currentPage == wizardScrolls.lastIndex) {
+            btnNextPage?.text = "🚀 开始生成"
+            btnNextPage?.setOnClickListener { generatePack() }
+        } else {
+            btnNextPage?.text = "下一步 →"
+            btnNextPage?.setOnClickListener { setPage(currentPage + 1) }
+        }
+        pageDots.forEachIndexed { i, dot ->
+            dot.setTextColor(colorOf(if (i == currentPage) R.color.md_primary else R.color.md_surface_variant))
+        }
+        wizardScrolls.getOrNull(currentPage)?.fullScroll(View.FOCUS_UP)
     }
 
     // ---------- M3 构件工厂 ----------
