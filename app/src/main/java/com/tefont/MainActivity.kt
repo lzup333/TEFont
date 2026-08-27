@@ -453,8 +453,8 @@ class MainActivity : AppCompatActivity() {
         // ---------- 底部导航 ----------
 
         val nav = BottomNavigationView(this).apply {
-            menu.add(0, ID_TAB_GENERATE, 0, "生成").setIcon(android.R.drawable.ic_menu_manage)
-            menu.add(0, ID_TAB_SETTINGS, 1, "设置").setIcon(android.R.drawable.ic_menu_preferences)
+            menu.add(0, ID_TAB_GENERATE, 0, "生成").setIcon(R.drawable.ic_tab_generate)
+            menu.add(0, ID_TAB_SETTINGS, 1, "设置").setIcon(R.drawable.ic_tab_settings)
             itemIconTintList = android.content.res.ColorStateList.valueOf(colorOf(R.color.md_primary))
             itemTextColor = android.content.res.ColorStateList.valueOf(colorOf(R.color.md_primary))
             background = GradientDrawable().apply {
