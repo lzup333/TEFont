@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3 · Nord Dark Scheme -->
+    <color name="md_background">#2E3440</color>              <!-- Polar Night 0 -->
+    <color name="md_surface">#3B4252</color>                 <!-- Polar Night 1 -->
+    <color name="md_surface_variant">#434C5E</color>         <!-- Polar Night 2 -->
+    <color name="md_on_surface">#ECEFF4</color>              <!-- Snow Storm 3 -->
+    <color name="md_on_surface_variant">#D8DEE9</color>      <!-- Snow Storm 1 -->
+    <color name="md_primary">#88C0D0</color>                 <!-- Frost 3 -->
+    <color name="md_on_primary">#2E3440</color>
+    <color name="md_primary_container">#3B5368</color>       <!-- Frost deep tint -->
+    <color name="md_on_primary_container">#ECEFF4</color>
+    <color name="md_secondary_container">#41506B</color>
+    <color name="md_on_secondary_container">#ECEFF4</color>
+</resources>

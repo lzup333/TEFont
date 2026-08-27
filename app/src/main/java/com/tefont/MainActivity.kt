@@ -1,6 +1,7 @@
 package com.tefont
 
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -17,10 +18,14 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.android.material.button.MaterialButton
@@ -79,6 +84,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var fontStatusText: TextView
     private lateinit var customSection: LinearLayout
+    private lateinit var pageScroll: ScrollView
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
     // 槽位字体覆盖: idx -> bytes；未覆盖则用主字体
@@ -107,10 +113,79 @@ class MainActivity : AppCompatActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    // 向导分页
+    private val wizardPages = mutableListOf<LinearLayout>()
+    private var pageDots: List<TextView> = emptyList()
+    private var btnPrevPage: MaterialButton? = null
+    private var btnNextPage: MaterialButton? = null
+    private var currentPage = 0
+
+    private lateinit var prefs: SharedPreferences
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        prefs = getSharedPreferences("tefont", MODE_PRIVATE)
+        applySavedTheme()
         super.onCreate(savedInstanceState)
         buildUi()
+        if (defaultAuthor().isNotEmpty() && authorInput.text.isNullOrBlank())
+            authorInput.setText(defaultAuthor())
         refreshCharSummary()
+    }
+
+    // ---------- 设置 ----------
+
+    private fun applySavedTheme() {
+        when (prefs.getString("theme", "system")) {
+            "light" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+            "dark" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+            else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        }
+    }
+
+    private fun defaultAuthor(): String = prefs.getString("author", "") ?: ""
+
+    private fun showSettingsDialog() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(10), dp(22), 0)
+        }
+        box.addView(sectionTitle("主题"))
+        lateinit var themeGroup: RadioGroup
+        themeGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+        }
+        val currentTheme = prefs.getString("theme", "system")
+        listOf(
+            RadioButton(this).apply { text = "跟随系统"; id = View.generateViewId(); isChecked = currentTheme == "system" },
+            RadioButton(this).apply { text = "Nord 浅色"; id = View.generateViewId(); isChecked = currentTheme == "light" },
+            RadioButton(this).apply { text = "Nord 深色"; id = View.generateViewId(); isChecked = currentTheme == "dark" }
+        ).forEachIndexed { i, rb ->
+            rb.tag = arrayOf("system", "light", "dark")[i]
+            rb.setTextColor(colorOf(R.color.md_on_surface))
+            themeGroup.addView(rb)
+        }
+        box.addView(themeGroup)
+
+        box.addView(sectionTitle("默认作者名"))
+        val authorEdit = inputField(box, "生成时作者名为空则使用此默认值").apply {
+            setText(defaultAuthor())
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("⚙ 设置")
+            .setView(box)
+            .setPositiveButton("保存") { d, _ ->
+                val sel = themeGroup.checkedRadioButtonId
+                val tag = findViewById<RadioButton>(sel).tag as String
+                prefs.edit().putString("theme", tag).putString("author", authorEdit.text?.toString()?.trim() ?: "").apply()
+                d.dismiss()
+                recreate()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     // ============================================================
@@ -121,26 +196,47 @@ class MainActivity : AppCompatActivity() {
     private fun colorOf(resId: Int): Int = ContextCompat.getColor(this, resId)
 
     private fun buildUi() {
-        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        pageScroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val scroll = pageScroll
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(28), dp(20), dp(40))
         }
 
-        column.addView(TextView(this).apply {
-            text = "TEFont"
-            textSize = 32f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(colorOf(R.color.md_primary))
+        // ── 标题区（含设置入口）──
+        column.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "TEFont"
+                textSize = 32f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorOf(R.color.md_primary))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(MaterialButton(this@MainActivity, null,
+                com.google.android.material.R.attr.materialIconButtonStyle).apply {
+                text = "⚙"
+                setOnClickListener { showSettingsDialog() }
+            })
         })
         column.addView(TextView(this).apply {
-            text = "泰拉瑞亚位图字体包生成器"
+            text = "TEFManager 字体包生成器"
             textSize = 14f
             setTextColor(colorOf(R.color.md_on_surface_variant))
             setPadding(0, dp(2), 0, dp(24))
         })
 
-        column.addView(card { add ->
+        // ── 向导分页容器 ──
+        fun newWizardPage(): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }.also { wizardPages.add(it); column.addView(it) }
+
+        val pageFilesW = newWizardPage()   // ① 字体与字库
+        val pageSlotsW = newWizardPage()   // ② 生成配置
+        val pageOutputW = newWizardPage()  // ③ 信息与生成
+
+        pageFilesW.addView(card { add ->
             add.addView(innerColumn {
                 fontStatusText = TextView(this@MainActivity).apply {
                     text = "尚未选择字体文件"
@@ -152,7 +248,7 @@ class MainActivity : AppCompatActivity() {
             })
         })
 
-        column.addView(card { add ->
+        pageFilesW.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("字库"))
 
@@ -188,7 +284,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        column.addView(card { add ->
+        pageSlotsW.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("生成配置"))
             SLOTS.forEachIndexed { i, s ->
@@ -226,7 +322,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        column.addView(card { add ->
+        pageOutputW.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("字体包信息"))
             nameInput = inputField(box, "包名称（留空 = 跟随字体文件名）")
@@ -235,7 +331,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        column.addView(card(bgRes = R.color.md_primary_container) { add ->
+        pageOutputW.addView(card(bgRes = R.color.md_primary_container) { add ->
             val box = innerColumn()
             genButton = bannerButton("开始生成（5 个槽位）", filled = true) { generatePack() }.apply {
                 isEnabled = false
@@ -274,8 +370,62 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
+        // ── 底部导航（向导）──
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) }
+        }
+        btnPrevPage = bannerButton("← 上一步", filled = false) { setPage(currentPage - 1) }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6); topMargin = 0 }
+        }
+        btnNextPage = bannerButton("下一步 →", filled = true) { setPage(currentPage + 1) }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { topMargin = 0 }
+        }
+        footer.addView(btnPrevPage)
+        footer.addView(btnNextPage)
+
+        val dotsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+        pageDots = wizardPages.map {
+            TextView(this).apply {
+                text = "●"
+                textSize = 11f
+                setTextColor(colorOf(R.color.md_surface_variant))
+                setPadding(dp(4), 0, dp(4), 0)
+            }.also(dotsRow::addView)
+        }
+
+        column.addView(footer)
+        column.addView(dotsRow)
+
         scroll.addView(column)
         setContentView(scroll)
+        setPage(0)
+    }
+
+    private fun setPage(index: Int) {
+        currentPage = index.coerceIn(0, wizardPages.lastIndex)
+        wizardPages.forEachIndexed { i, pg -> pg.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
+        btnPrevPage?.visibility = if (currentPage == 0) View.GONE else View.VISIBLE
+        btnNextPage?.text = if (currentPage == wizardPages.lastIndex) "🚀 开始生成" else "下一步 →"
+        if (currentPage == wizardPages.lastIndex) {
+            // 最后一步的 Next 不再翻页；文案只是提示，点击也停留在本页
+            btnNextPage?.setOnClickListener { generatePack() }
+        } else {
+            btnNextPage?.setOnClickListener { setPage(currentPage + 1) }
+        }
+        pageDots.forEachIndexed { i, dot ->
+            dot.setTextColor(colorOf(if (i == currentPage) R.color.md_primary else R.color.md_surface_variant))
+        }
+        pageScroll.fullScroll(View.FOCUS_UP)
     }
 
     // ---------- M3 构件工厂 ----------
@@ -669,7 +819,7 @@ class MainActivity : AppCompatActivity() {
         val pkgName = nameInput.text?.toString()?.trim().ifNullOrEmpty {
             fontFileName.substringBeforeLast('.').ifEmpty { "font" }
         }
-        val author = authorInput.text?.toString()?.trim() ?: ""
+        val author = authorInput.text?.toString()?.trim().takeUnless { it.isNullOrEmpty() } ?: defaultAuthor()
         val desc = descInput.text?.toString()?.trim() ?: ""
         val custom = !useBuiltinLibs && customReady()
         val customChars = if (custom) customCombined() else emptyList()
