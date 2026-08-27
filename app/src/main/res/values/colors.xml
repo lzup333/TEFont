@@ -10,19 +10,6 @@
     <color name="md_on_primary">#FFFFFF</color>
     <color name="md_primary_container">#DCE6F1</color>       <!-- Frost tint -->
     <color name="md_on_primary_container">#2E3440</color>
-    <color name="md_secondary_container">#DCE6F1</color>     <!-- Frost tint -->
+    <color name="md_secondary_container">#DCE6F1</color>
     <color name="md_on_secondary_container">#2E3440</color>
-
-    <!-- Aurora accents（保留命名兼容） -->
-    <color name="accent">#5E81AC</color>
-    <color name="success">#A3BE8C</color>
-    <color name="error">#BF616A</color>
-    <color name="warning">#EBCB8B</color>
-    <color name="black">#2E3440</color>
-    <color name="white">#ECEFF4</color>
-    <color name="background">#ECEFF4</color>
-    <color name="card_background">#E5E9F0</color>
-    <color name="text_primary">#2E3440</color>
-    <color name="text_secondary">#4C566A</color>
-    <color name="accent_dark">#81A1C1</color>
 </resources>

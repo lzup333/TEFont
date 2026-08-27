@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -268,6 +269,7 @@ class MainActivity : AppCompatActivity() {
                 visibility = View.GONE
             }
             shareBar.addView(bannerButton("📦 分享字体包 ZIP", filled = false) { lastZipFile?.let(::shareZip) })
+            shareBar.addView(bannerButton("💾 导出字体包到本地…", filled = false) { exportZip() })
             box.addView(shareBar)
             add.addView(box)
         })
@@ -375,6 +377,12 @@ class MainActivity : AppCompatActivity() {
         }, code)
     }
 
+    /** SAF 的 lastPathSegment 形如 "primary:Download/a.ttf"，提取纯文件名 */
+    private fun displayName(uri: Uri): String =
+        (uri.lastPathSegment ?: "unknown")
+            .substringAfterLast(':')
+            .substringAfterLast('/')
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK || data?.data == null) return
@@ -384,7 +392,7 @@ class MainActivity : AppCompatActivity() {
                     REQ_FONT -> {
                         val buf = ByteArrayOutputStream()
                         stream.copyTo(buf)
-                        loadFont(buf.toByteArray(), data.data!!.lastPathSegment ?: "unknown")
+                        loadFont(buf.toByteArray(), displayName(data.data!!))
                     }
                     REQ_ASCII -> { asciiChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
                     REQ_DIGITS -> { digitChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
@@ -394,11 +402,16 @@ class MainActivity : AppCompatActivity() {
                         stream.copyTo(buf)
                         val idx = requestCode - REQ_SLOT_FONT_BASE
                         slotFontBytes[idx] = buf.toByteArray()
-                        slotFontNames[idx] = data.data!!.lastPathSegment ?: "font"
+                        slotFontNames[idx] = displayName(data.data!!)
                         Toast.makeText(this,
                             "✔ 槽位 ${SLOTS[idx].key} 将使用独立字体 ${slotFontNames[idx]}",
                             Toast.LENGTH_SHORT).show()
                         refreshCharSummary()
+                    }
+                    REQ_EXPORT -> {
+                        if (data.data != null && copyZipTo(data.data!!))
+                            Toast.makeText(this, "✔ 已导出到所选位置", Toast.LENGTH_SHORT).show()
+                        else Toast.makeText(this, "导出失败", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -894,6 +907,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 让用户选择目标位置（默认 Download/FontPack_xxx.zip），直接把生成的包写过去 */
+    private fun exportZip() {
+        val zip = lastZipFile ?: run {
+            Toast.makeText(this, "请先生成字体包", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+            putExtra(Intent.EXTRA_TITLE, zip.name)
+        }, REQ_EXPORT)
+    }
+
+    private fun copyZipTo(uri: Uri): Boolean = try {
+        contentResolver.openOutputStream(uri)?.use { out ->
+            lastZipFile!!.inputStream().use { it.copyTo(out) }
+        } != null
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+
     companion object {
         private const val PACK_INFO_ENTRY = "pack_info.json"
         private const val REQ_FONT = 10
@@ -901,5 +936,6 @@ class MainActivity : AppCompatActivity() {
         private const val REQ_DIGITS = 12
         private const val REQ_FULL = 13
         private const val REQ_SLOT_FONT_BASE = 20 // + 槽位索引
+        private const val REQ_EXPORT = 30
     }
 }
