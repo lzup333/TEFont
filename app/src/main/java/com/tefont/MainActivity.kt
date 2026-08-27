@@ -381,6 +381,7 @@ class MainActivity : AppCompatActivity() {
                 Triple("Nord 深色", THEME_DARK, null)
             ).forEach { (label, tag, _) ->
                 themeGroup.addView(RadioButton(this@MainActivity).apply {
+                    id = View.generateViewId()
                     this.text = label
                     this.tag = tag
                     isChecked = currentTheme == tag
