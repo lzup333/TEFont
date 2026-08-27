@@ -23,15 +23,14 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
@@ -61,33 +60,33 @@ private fun slotRes(pos: Int): Int = when (pos) {
     else -> R.raw.builtin_chars_ascii
 }
 
-/**
- * 与原版 HTML 生成器对齐的字符信息。
- * 关键点：所有字符在同一坐标系下度量——小画布上以 alphabetic 基线绘制，
- * 基线 y 固定为 fontSize，于是 ink 的边界扫描结果可直接换算成 BMFont 的 offset。
- */
-private const val BASE_MARGIN_X = 2   // 原版 sx：预留抗锯齿出血
-private const val BASE_MARGIN_Y = 2   // 原版 sy
-private const val CELL_PAD = 4        // 原版 padX/padY 中不含描边投影的部分
+data class Placement(val page: Int, val x: Int, val y: Int, val w: Int, val h: Int)
 
-data class CharRender(
+/**
+ * 与原版 HTML 生成器对齐：所有字符在同一坐标系下度量——
+ * 小画布上以 alphabetic 基线绘制（基线 y = fontSize），
+ * ink 边界扫描结果可直接换算为 BMFont 的 offset。
+ */
+private const val BASE_MARGIN_X = 2   // 抗锯齿出血（原版 sx）
+private const val BASE_MARGIN_Y = 2   // 原版 sy
+private const val CELL_PAD = 4        // 原版 padX/padY 的公共部分
+
+class CharRender(
     val ch: Char,
-    val cell: Bitmap,      // cw × ch 的小画布（用完回收）
+    val cell: Bitmap,
     val minX: Int, val minY: Int,
     val trimW: Int, val trimH: Int,
-    val xo: Int,           // = minX - marginX，写入 xoffset
-    val yo: Int,           // = minY - marginY，写入 yoffset
-    val adv: Int           // = ceil(measureText)，写入 xadvance 的基础
+    val xo: Int,   // xoffset = minX - marginX
+    val yo: Int,   // yoffset = minY - marginY
+    val adv: Int   // ceil(measureText)
 )
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var fontStatusText: TextView
     private lateinit var customSection: LinearLayout
-    private lateinit var pageScroll: ScrollView
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
-    // 槽位字体覆盖: idx -> bytes；未覆盖则用主字体
     private val slotFontBytes = mutableMapOf<Int, ByteArray>()
     private val slotFontNames = mutableMapOf<Int, String>()
     private val slotSummaries = mutableMapOf<Int, TextView>()
@@ -100,6 +99,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressIndicator: LinearProgressIndicator
     private lateinit var progressLabel: TextView
     private lateinit var shareBar: LinearLayout
+    private lateinit var outputCardArea: LinearLayout
+
+    // 设置页控件
+    private lateinit var themeGroup: RadioGroup
+    private lateinit var authorPrefEdit: TextInputEditText
 
     private var fontLoaded = false
     private var fontFileName = ""
@@ -112,131 +116,104 @@ class MainActivity : AppCompatActivity() {
     private val fullChars = StringBuilder()
 
     private val handler = Handler(Looper.getMainLooper())
-
-    // 向导分页
-    private val wizardPages = mutableListOf<LinearLayout>()
-    private var pageDots: List<TextView> = emptyList()
-    private var btnPrevPage: MaterialButton? = null
-    private var btnNextPage: MaterialButton? = null
-    private var currentPage = 0
-
     private lateinit var prefs: SharedPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        prefs = getSharedPreferences("tefont", MODE_PRIVATE)
+        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         applySavedTheme()
         super.onCreate(savedInstanceState)
         buildUi()
-        if (defaultAuthor().isNotEmpty() && authorInput.text.isNullOrBlank())
-            authorInput.setText(defaultAuthor())
         refreshCharSummary()
     }
 
     // ---------- 设置 ----------
 
     private fun applySavedTheme() {
-        when (prefs.getString("theme", "system")) {
-            "light" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-            "dark" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+        when (prefs.getString(KEY_THEME, THEME_SYSTEM)) {
+            THEME_LIGHT -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+            THEME_DARK -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
             else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
         }
     }
 
-    private fun defaultAuthor(): String = prefs.getString("author", "") ?: ""
+    private fun defaultAuthor(): String = prefs.getString(KEY_AUTHOR, "").orEmpty()
 
-    private fun showSettingsDialog() {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(10), dp(22), 0)
-        }
-        box.addView(sectionTitle("主题"))
-        lateinit var themeGroup: RadioGroup
-        themeGroup = RadioGroup(this).apply {
-            orientation = RadioGroup.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4) }
-        }
-        val currentTheme = prefs.getString("theme", "system")
-        listOf(
-            RadioButton(this).apply { text = "跟随系统"; id = View.generateViewId(); isChecked = currentTheme == "system" },
-            RadioButton(this).apply { text = "Nord 浅色"; id = View.generateViewId(); isChecked = currentTheme == "light" },
-            RadioButton(this).apply { text = "Nord 深色"; id = View.generateViewId(); isChecked = currentTheme == "dark" }
-        ).forEachIndexed { i, rb ->
-            rb.tag = arrayOf("system", "light", "dark")[i]
-            rb.setTextColor(colorOf(R.color.md_on_surface))
-            themeGroup.addView(rb)
-        }
-        box.addView(themeGroup)
-
-        box.addView(sectionTitle("默认作者名"))
-        val authorEdit = inputField(box, "生成时作者名为空则使用此默认值").apply {
-            setText(defaultAuthor())
-        }
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("⚙ 设置")
-            .setView(box)
-            .setPositiveButton("保存") { d, _ ->
-                val sel = themeGroup.checkedRadioButtonId
-                val tag = findViewById<RadioButton>(sel).tag as String
-                prefs.edit().putString("theme", tag).putString("author", authorEdit.text?.toString()?.trim() ?: "").apply()
-                d.dismiss()
-                recreate()
-            }
-            .setNegativeButton("取消", null)
-            .show()
+    private fun saveSettings(): Boolean {
+        val sel = themeGroup.checkedRadioButtonId
+        val rb = themeGroup.findViewById<RadioButton>(sel)
+        if (rb == null || rb.tag !is String) return false
+        prefs.edit()
+            .putString(KEY_THEME, rb.tag as String)
+            .putString(KEY_AUTHOR, authorPrefEdit.text?.toString()?.trim().orEmpty())
+            .apply()
+        applySavedTheme()
+        return true
     }
 
     // ============================================================
-    // UI 构建 (Material 3 · Nord Light)
+    // UI 构建 (Material 3 · Nord Light/Dark)
     // ============================================================
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
     private fun colorOf(resId: Int): Int = ContextCompat.getColor(this, resId)
 
     private fun buildUi() {
-        pageScroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
-        val scroll = pageScroll
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(40))
         }
 
-        // ── 标题区（含设置入口）──
+        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+
+        // ── 标题区 ──
         column.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(28), dp(20), dp(4))
             addView(TextView(this@MainActivity).apply {
                 text = "TEFont"
                 textSize = 32f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorOf(R.color.md_primary))
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(MaterialButton(this@MainActivity, null,
-                com.google.android.material.R.attr.materialIconButtonStyle).apply {
-                text = "⚙"
-                setOnClickListener { showSettingsDialog() }
-            })
         })
         column.addView(TextView(this).apply {
             text = "TEFManager 字体包生成器"
             textSize = 14f
             setTextColor(colorOf(R.color.md_on_surface_variant))
-            setPadding(0, dp(2), 0, dp(24))
+            setPadding(dp(20), 0, dp(20), dp(16))
         })
 
-        // ── 向导分页容器 ──
-        fun newWizardPage(): LinearLayout = LinearLayout(this).apply {
+        // ── 生成页容器 ──
+        val generatePage = ScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER
+            visibility = View.VISIBLE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        val genColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), 0, dp(20), dp(8))
+        }
+        generatePage.addView(genColumn)
+
+        // ── 设置页容器 ──
+        val settingsPage = ScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER
             visibility = View.GONE
-        }.also { wizardPages.add(it); column.addView(it) }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        val setColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), 0, dp(20), dp(24))
+        }
+        settingsPage.addView(setColumn)
 
-        val pageFilesW = newWizardPage()   // ① 字体与字库
-        val pageSlotsW = newWizardPage()   // ② 生成配置
-        val pageOutputW = newWizardPage()  // ③ 信息与生成
+        // ---------- 生成页 ----------
 
-        pageFilesW.addView(card { add ->
+        genColumn.addView(card { add ->
             add.addView(innerColumn {
                 fontStatusText = TextView(this@MainActivity).apply {
                     text = "尚未选择字体文件"
@@ -248,7 +225,7 @@ class MainActivity : AppCompatActivity() {
             })
         })
 
-        pageFilesW.addView(card { add ->
+        genColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("字库"))
 
@@ -277,14 +254,18 @@ class MainActivity : AppCompatActivity() {
                 orientation = LinearLayout.VERTICAL
                 visibility = View.GONE
             }
-            listOf("ASCII 字符文件" to REQ_ASCII, "数字字符文件" to REQ_DIGITS, "大字库文本文件" to REQ_FULL).forEach { (label, code) ->
+            listOf(
+                "ASCII 字符文件" to REQ_ASCII,
+                "数字字符文件" to REQ_DIGITS,
+                "大字库文本文件" to REQ_FULL
+            ).forEach { (label, code) ->
                 customSection.addView(bannerButton(label, filled = false) { chooseTextFile(code) })
             }
             box.addView(customSection)
             add.addView(box)
         })
 
-        pageSlotsW.addView(card { add ->
+        genColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("生成配置"))
             SLOTS.forEachIndexed { i, s ->
@@ -322,32 +303,22 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        pageOutputW.addView(card { add ->
+        genColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("字体包信息"))
             nameInput = inputField(box, "包名称（留空 = 跟随字体文件名）")
-            authorInput = inputField(box, "作者名（可选）")
+            authorInput = inputField(box, "作者名（留空 = 使用设置中的默认值）")
             descInput = inputField(box, "描述 / 说明（可选）", maxLines = 3)
             add.addView(box)
         })
 
-        pageOutputW.addView(card(bgRes = R.color.md_primary_container) { add ->
-            val box = innerColumn()
-            genButton = bannerButton("开始生成（5 个槽位）", filled = true) { generatePack() }.apply {
-                isEnabled = false
-                setTextSize(17f)
-                setTypeface(typeface, Typeface.BOLD)
-            }
-            box.addView(genButton)
-
+        genColumn.addView(card(bgRes = R.color.md_primary_container) { add ->
+            outputCardArea = innerColumn()
             progressIndicator = LinearProgressIndicator(this@MainActivity).apply {
                 max = 100
                 visibility = View.GONE
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(12) }
             }
-            box.addView(progressIndicator)
+            outputCardArea.addView(progressIndicator)
 
             progressLabel = TextView(this@MainActivity).apply {
                 textSize = 12f
@@ -358,7 +329,15 @@ class MainActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             }
-            box.addView(progressLabel)
+            outputCardArea.addView(progressLabel)
+
+            // 唯一的生成入口（进度条下方）
+            genButton = bannerButton("🚀 开始生成（5 个槽位）", filled = true) { generatePack() }.apply {
+                isEnabled = false
+                setTextSize(17f)
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            outputCardArea.addView(genButton)
 
             shareBar = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -366,76 +345,97 @@ class MainActivity : AppCompatActivity() {
             }
             shareBar.addView(bannerButton("📦 分享字体包 ZIP", filled = false) { lastZipFile?.let(::shareZip) })
             shareBar.addView(bannerButton("💾 导出字体包到本地…", filled = false) { exportZip() })
-            box.addView(shareBar)
+            outputCardArea.addView(shareBar)
+            add.addView(outputCardArea)
+        })
+
+        // ---------- 设置页 ----------
+
+        setColumn.addView(card { add ->
+            val box = innerColumn()
+            box.addView(sectionTitle("主题"))
+
+            themeGroup = RadioGroup(this@MainActivity).apply {
+                orientation = RadioGroup.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(6) }
+            }
+            val currentTheme = prefs.getString(KEY_THEME, THEME_SYSTEM)
+            listOf(
+                Triple("跟随系统", THEME_SYSTEM, null),
+                Triple("Nord 浅色", THEME_LIGHT, null),
+                Triple("Nord 深色", THEME_DARK, null)
+            ).forEach { (label, tag, _) ->
+                themeGroup.addView(RadioButton(this@MainActivity).apply {
+                    this.text = label
+                    this.tag = tag
+                    isChecked = currentTheme == tag
+                    setTextColor(colorOf(R.color.md_on_surface))
+                    textSize = 15f
+                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                })
+            }
+            box.addView(themeGroup)
             add.addView(box)
         })
 
-        // ── 底部导航（向导）──
-        val footer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        setColumn.addView(card { add ->
+            val box = innerColumn()
+            box.addView(sectionTitle("生成默认值"))
+            authorPrefEdit = inputField(box, "默认作者名（生成时「作者名」留空则使用此值）")
+            authorPrefEdit.setText(defaultAuthor())
+            add.addView(box)
+        })
+
+        setColumn.addView(bannerButton("💾 保存设置", filled = true) {
+            if (saveSettings()) {
+                Toast.makeText(this, "✔ 设置已保存并生效", Toast.LENGTH_SHORT).show()
+                recreate()
+            } else {
+                Toast.makeText(this, "保存失败：请选择一个主题选项", Toast.LENGTH_SHORT).show()
+            }
+        }.apply { layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+        ) })
+
+        // ---------- 底部导航 ----------
+
+        val nav = BottomNavigationView(this).apply {
+            menu.add(0, ID_TAB_GENERATE, 0, "生成").setIcon(android.R.drawable.ic_menu_manage)
+            menu.add(0, ID_TAB_SETTINGS, 1, "设置").setIcon(android.R.drawable.ic_menu_preferences)
+            itemIconTintList = android.content.res.ColorStateList.valueOf(colorOf(R.color.md_primary))
+            itemTextColor = android.content.res.ColorStateList.valueOf(colorOf(R.color.md_primary))
+            background = GradientDrawable().apply {
+                setColor(colorOf(R.color.md_surface))
+            }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4) }
-        }
-        btnPrevPage = bannerButton("← 上一步", filled = false) { setPage(currentPage - 1) }.apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6); topMargin = 0 }
-        }
-        btnNextPage = bannerButton("下一步 →", filled = true) { setPage(currentPage + 1) }.apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply { topMargin = 0 }
-        }
-        footer.addView(btnPrevPage)
-        footer.addView(btnNextPage)
-
-        val dotsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-        }
-        pageDots = wizardPages.map {
-            TextView(this).apply {
-                text = "●"
-                textSize = 11f
-                setTextColor(colorOf(R.color.md_surface_variant))
-                setPadding(dp(4), 0, dp(4), 0)
-            }.also(dotsRow::addView)
+            )
+            setOnItemSelectedListener { item ->
+                when (item.itemId) {
+                    ID_TAB_GENERATE -> {
+                        generatePage.visibility = View.VISIBLE
+                        settingsPage.visibility = View.GONE
+                        true
+                    }
+                    else -> {
+                        generatePage.visibility = View.GONE
+                        settingsPage.visibility = View.VISIBLE
+                        true
+                    }
+                }
+            }
         }
 
-        column.addView(footer)
-        column.addView(dotsRow)
+        column.addView(generatePage)
+        column.addView(settingsPage)
+        column.addView(nav)
 
-        scroll.addView(column)
-        setContentView(scroll)
-        setPage(0)
-    }
-
-    private fun setPage(index: Int) {
-        currentPage = index.coerceIn(0, wizardPages.lastIndex)
-        wizardPages.forEachIndexed { i, pg -> pg.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
-        btnPrevPage?.visibility = if (currentPage == 0) View.GONE else View.VISIBLE
-        btnNextPage?.text = if (currentPage == wizardPages.lastIndex) "🚀 开始生成" else "下一步 →"
-        if (currentPage == wizardPages.lastIndex) {
-            // 最后一步的 Next 不再翻页；文案只是提示，点击也停留在本页
-            btnNextPage?.setOnClickListener { generatePack() }
-        } else {
-            btnNextPage?.setOnClickListener { setPage(currentPage + 1) }
-        }
-        pageDots.forEachIndexed { i, dot ->
-            dot.setTextColor(colorOf(if (i == currentPage) R.color.md_primary else R.color.md_surface_variant))
-        }
-        pageScroll.fullScroll(View.FOCUS_UP)
+        setContentView(column)
     }
 
     // ---------- M3 构件工厂 ----------
-
-    private inline fun innerColumn(configure: LinearLayout.() -> Unit = {}): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(18))
-            configure()
-        }
 
     private fun card(
         bgRes: Int = R.color.md_surface,
@@ -450,6 +450,13 @@ class MainActivity : AppCompatActivity() {
         ).apply { bottomMargin = dp(14) }
         content(this)
     }
+
+    private inline fun innerColumn(configure: LinearLayout.() -> Unit = {}): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            configure()
+        }
 
     private fun sectionTitle(text: String): TextView =
         TextView(this).apply {
@@ -513,6 +520,12 @@ class MainActivity : AppCompatActivity() {
     // 文件选择
     // ============================================================
 
+    /** SAF 的 lastPathSegment 形如 "primary:Download/a.ttf"，提取纯文件名 */
+    private fun displayName(uri: Uri): String =
+        (uri.lastPathSegment ?: "unknown")
+            .substringAfterLast(':')
+            .substringAfterLast('/')
+
     private fun chooseFont() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -526,12 +539,6 @@ class MainActivity : AppCompatActivity() {
             type = "text/plain"
         }, code)
     }
-
-    /** SAF 的 lastPathSegment 形如 "primary:Download/a.ttf"，提取纯文件名 */
-    private fun displayName(uri: Uri): String =
-        (uri.lastPathSegment ?: "unknown")
-            .substringAfterLast(':')
-            .substringAfterLast('/')
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -559,7 +566,7 @@ class MainActivity : AppCompatActivity() {
                         refreshCharSummary()
                     }
                     REQ_EXPORT -> {
-                        if (data.data != null && copyZipTo(data.data!!))
+                        if (copyZipTo(data.data!!))
                             Toast.makeText(this, "✔ 已导出到所选位置", Toast.LENGTH_SHORT).show()
                         else Toast.makeText(this, "导出失败", Toast.LENGTH_SHORT).show()
                     }
@@ -644,11 +651,11 @@ class MainActivity : AppCompatActivity() {
             spaceEdit.setText("")
         })
 
-        // ── 槽位独立字体 ──
         var dialogRef: androidx.appcompat.app.AlertDialog? = null
+
         box.addView(TextView(this).apply {
             text = if (idx in slotFontNames) "当前独立字体：${slotFontNames[idx]}"
-                   else "当前：使用全局所选字体"
+            else "当前：使用全局所选字体"
             textSize = 12f
             setTextColor(colorOf(if (idx in slotFontNames) R.color.md_primary else R.color.md_on_surface_variant))
             layoutParams = LinearLayout.LayoutParams(
@@ -657,16 +664,19 @@ class MainActivity : AppCompatActivity() {
         })
         box.addView(bannerButton("为本槽位选择独立字体…", filled = false) {
             dialogRef?.dismiss()
-            chooseSlotFont(idx)
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }, REQ_SLOT_FONT_BASE + idx)
         })
         box.addView(bannerButton("恢复使用全局字体", filled = false) {
             slotFontBytes.remove(idx)
             slotFontNames.remove(idx)
             refreshCharSummary()
-            Toast.makeText(this@MainActivity, "槽位 ${s.key} 已恢复全局字体", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "槽位 ${s.key} 已恢复全局字体", Toast.LENGTH_SHORT).show()
         })
 
-        dialogRef = MaterialAlertDialogBuilder(this)
+        dialogRef = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("${s.key} · ${s.label}")
             .setView(box)
             .setPositiveButton("保存") { d, _ ->
@@ -680,13 +690,6 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .show()
-    }
-
-    private fun chooseSlotFont(idx: Int) {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }, REQ_SLOT_FONT_BASE + idx)
     }
 
     // ============================================================
@@ -713,14 +716,17 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    /**
-     * 原版货架式装箱（packShelves）：按高度降序，先填已有 shelf 再开新 shelf/page。
-     */
+    /** 原版货架式装箱 packShelves：按高度降序，先填已有 shelf 再开新 shelf/page */
     private class PackedPlacement(val page: Int, val x: Int, val y: Int, val w: Int, val h: Int)
-
     private class Shelf(var x: Int, val y: Int, val h: Int)
-
     private class PackPage(val shelves: MutableList<Shelf>, var maxY: Int)
+
+    private class GeneratedSlot(
+        val key: String,
+        val fntTmp: File,
+        val pageFiles: List<File>,
+        val pagesRaw: List<Bitmap>
+    )
 
     private fun packShelves(items: List<Pair<Int, Int>>, pageW: Int, pageH: Int, pad: Int): Pair<List<PackedPlacement>, Int> {
         val sorted = items.withIndex().sortedByDescending { it.value.second }
@@ -759,7 +765,7 @@ class MainActivity : AppCompatActivity() {
         return placements.map { it!! } to pages.size
     }
 
-    /** 对齐原版 measureChar + 单字符渲染：小画布上以基线=fontSize 绘制后做 alpha 裁剪。 */
+    /** 对齐原版 measureChar：小画布基线=fontSize 绘制后 alpha 裁剪 */
     private fun renderChar(ch: Char, paint: Paint, fs: Int): CharRender? {
         val adv = paint.measureText(ch.toString())
         if (adv <= 0f) return null
@@ -770,8 +776,7 @@ class MainActivity : AppCompatActivity() {
         val chh = h + CELL_PAD
 
         val cell = Bitmap.createBitmap(cw, chh, Bitmap.Config.ARGB_8888)
-        val cx = Canvas(cell)
-        cx.drawText(ch.toString(), BASE_MARGIN_X.toFloat(), (fs + BASE_MARGIN_Y).toFloat(), paint)
+        Canvas(cell).drawText(ch.toString(), BASE_MARGIN_X.toFloat(), (fs + BASE_MARGIN_Y).toFloat(), paint)
 
         val pixels = IntArray(cw * chh)
         cell.getPixels(pixels, 0, cw, 0, 0, cw, chh)
@@ -789,30 +794,39 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (maxX < 0) {
-            // 原版行为：无墨迹但 measureText 有进距（如空格）→ 记录为 1x1 空字形，
-            // 只贡献 xadvance，不影响贴图
+            // 无墨迹但有进距（如空格）→ 1x1 空字形，只贡献 xadvance
             cell.recycle()
             val placeholder = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
             return CharRender(ch, placeholder, 0, 0, 1, 1, 0, 0, ceil(adv.toDouble()).toInt())
         }
 
-        val tw = maxX - minX + 1
-        val th = maxY - minY + 1
         return CharRender(
             ch, cell,
-            minX, minY, tw, th,
+            minX, minY,
+            maxX - minX + 1, maxY - minY + 1,
             minX - BASE_MARGIN_X,
             minY - BASE_MARGIN_Y,
             ceil(adv.toDouble()).toInt()
         )
     }
 
-    private class GeneratedSlot(
-        val key: String,
-        val fntTmp: File,
-        val pageFiles: List<File>,
-        val pagesRaw: List<Bitmap>
-    )
+    @Volatile
+    private var cachedFontBytes: ByteArray? = null
+    @Volatile
+    private var cachedFontPath: String? = null
+    private val materializedSlots = mutableMapOf<Int, String>()
+
+    private fun makeFontFile(): String {
+        val bytes = cachedFontBytes ?: error("字体未缓存")
+        cachedFontPath?.let { p -> if (File(p).length() == bytes.size.toLong()) return p }
+        return materializeFont(bytes, "_tmp_font.ttf").also { cachedFontPath = it }
+    }
+
+    private fun materializeFont(bytes: ByteArray, fileName: String): String {
+        val f = File(cacheDir, fileName)
+        FileOutputStream(f).use { it.write(bytes) }
+        return f.absolutePath
+    }
 
     private fun doGenerate(): File {
         val t0 = System.currentTimeMillis()
@@ -838,16 +852,14 @@ class MainActivity : AppCompatActivity() {
             handler.post { progressLabel.text = "${slot.key} (${n + 1}/$nTargets)…" }
 
             // 字体：槽位独立字体优先，否则全局所选字体
-            val fontPath = if (n in slotFontBytes) materializeFont(slotFontBytes[n]!!, "_tmp_slot${n}.ttf")
-                           else makeFontFile()
-            val loadFont = Typeface.createFromFile(fontPath)
+            val fontPath = if (n in slotFontBytes) materializeFont(slotFontBytes[n]!!, "_tmp_slot$n.ttf")
+            else makeFontFile()
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = loadFont
+                typeface = Typeface.createFromFile(fontPath)
                 textSize = fs.toFloat()
                 color = Color.WHITE
             }
 
-            // ① 逐字符渲染到小画布并裁剪（对齐原版 measureChar / 渲染阶段）
             val renders = mutableListOf<CharRender>()
             chars.forEachIndexed { index, ch ->
                 renderChar(ch, paint, fs)?.let { renders.add(it) }
@@ -861,16 +873,13 @@ class MainActivity : AppCompatActivity() {
             }
             if (renders.isEmpty()) return@forEachIndexed
 
-            // ② 货架装箱
             val items = renders.map { it.trimW to it.trimH }
             val (placements, numPages) = packShelves(items, pageW, pageH, padding)
 
-            // ③ 从小画布拷贝裁剪区域到大页（imageSmoothing off，等像素搬运）
             val pagesRaw = Array(numPages) { Bitmap.createBitmap(pageW, pageH, Bitmap.Config.ARGB_8888) }
             renders.forEachIndexed { i, r ->
                 val pl = placements[i]
-                val pc = Canvas(pagesRaw[pl.page])
-                pc.drawBitmap(
+                Canvas(pagesRaw[pl.page]).drawBitmap(
                     r.cell,
                     Rect(r.minX, r.minY, r.minX + r.trimW, r.minY + r.trimH),
                     RectF(pl.x.toFloat(), pl.y.toFloat(), (pl.x + pl.w).toFloat(), (pl.y + pl.h).toFloat()),
@@ -879,11 +888,10 @@ class MainActivity : AppCompatActivity() {
                 r.cell.recycle()
             }
 
-            // ④ 写出文件
             val fntContent = buildFNTAlignedWithOriginal(
                 outName = slot.key,
                 fontSize = fs,
-                spacing = spacing,
+                spacingExtra = spacing,
                 padding = padding,
                 pageW = pageW,
                 pageH = pageH,
@@ -892,8 +900,7 @@ class MainActivity : AppCompatActivity() {
                 placements = placements,
                 xOffsets = renders.map { it.xo },
                 yOffsets = renders.map { it.yo },
-                advances = renders.map { it.adv },
-                spacingExtra = spacing
+                advances = renders.map { it.adv }
             )
 
             val fntTmp = File(cacheDir, "_tmp_${slot.key}.fnt").apply { writeText(fntContent) }
@@ -911,7 +918,6 @@ class MainActivity : AppCompatActivity() {
 
         if (results.isEmpty()) throw IllegalStateException("没有可生成的有效字符")
 
-        // 打包
         handler.post { progressLabel.text = "打包中..." }
         val zipFile = File(cacheDir, "FontPack_$pkgName.zip")
         ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
@@ -919,7 +925,6 @@ class MainActivity : AppCompatActivity() {
                 zos.putNextEntry(ZipEntry("${it.key}/"))
                 zos.closeEntry()
             }
-
             zos.putNextEntry(ZipEntry(PACK_INFO_ENTRY))
             zos.write(buildPackInfoJson(pkgName, author, desc).toByteArray(Charsets.UTF_8))
             zos.closeEntry()
@@ -930,7 +935,6 @@ class MainActivity : AppCompatActivity() {
                 zos.closeEntry()
 
                 r.pageFiles.forEachIndexed { i, f ->
-                    // 原版规则：单页 → outName.png；多页 → outName_0.png 起（无补零）
                     val name = if (r.pageFiles.size == 1) "${r.key}.png" else "${r.key}_$i.png"
                     zos.putNextEntry(ZipEntry("${r.key}/$name"))
                     FileInputStream(f).copyTo(zos)
@@ -944,29 +948,12 @@ class MainActivity : AppCompatActivity() {
             r.fntTmp.delete()
             r.pageFiles.forEach(File::delete)
         }
+        materializedSlots.values.forEach { File(it).delete() }
+        materializedSlots.clear()
 
         val dur = "%.2f".format((System.currentTimeMillis() - t0) / 1000.0)
         handler.post { progressLabel.text = "完成 · $dur s · ${results.size} 槽位" }
         return zipFile
-    }
-
-    /** 为后台线程提供已加载的字体文件：从选择时缓存的字节重建临时 ttf */
-    @Volatile
-    private var cachedFontBytes: ByteArray? = null
-    @Volatile
-    private var cachedFontPath: String? = null
-
-    private fun makeFontFile(): String {
-        val bytes = cachedFontBytes ?: error("字体未缓存")
-        cachedFontPath?.let { p -> if (File(p).length() == bytes.size.toLong()) return p }
-        return materializeFont(bytes, "_tmp_font.ttf").also { cachedFontPath = it }
-    }
-
-    /** 把字体字节落到缓存目录（后台线程调用） */
-    private fun materializeFont(bytes: ByteArray, fileName: String): String {
-        val f = File(cacheDir, fileName)
-        FileOutputStream(f).use { it.write(bytes) }
-        return f.absolutePath
     }
 
     private fun onGenerated(zipFile: File) {
@@ -975,15 +962,48 @@ class MainActivity : AppCompatActivity() {
         shareBar.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(100, true)
         genButton.isEnabled = true
-        genButton.text = "✔ 已完成，可分享或再次生成"
+        genButton.text = "✔ 已完成，可分享、导出或再次生成"
         Toast.makeText(this, "✔ 字体包已生成", Toast.LENGTH_SHORT).show()
     }
 
-    // ============================================================
-    // 数据格式
-    // ============================================================
+    // ---------- 输出 ----------
 
-    private fun String?.ifNullOrEmpty(f: () -> String): String = if (isNullOrEmpty()) f() else this
+    private fun shareZip(zipFile: File) {
+        try {
+            val uri = FileProvider.getUriForFile(this, "${packageName}.provider", zipFile)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }, "分享字体包"))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "分享失败：${zipFile.absolutePath}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun exportZip() {
+        val zip = lastZipFile ?: run {
+            Toast.makeText(this, "请先生成字体包", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+            putExtra(Intent.EXTRA_TITLE, zip.name)
+        }, REQ_EXPORT)
+    }
+
+    private fun copyZipTo(uri: Uri): Boolean = try {
+        contentResolver.openOutputStream(uri)?.use { out ->
+            lastZipFile!!.inputStream().use { it.copyTo(out) }
+        } != null
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+
+    // ---------- 数据格式 ----------
 
     private fun jsonStr(s: String): String =
         "\"" + s.replace("\\", "\\\\")
@@ -1001,17 +1021,9 @@ class MainActivity : AppCompatActivity() {
         append("}")
     }
 
-    /**
-     * 与原版 HTML 的 fnt 输出完全一致：
-     *  - lineHeight = round(fontSize*1.5)，base = floor(fontSize*0.8)
-     *  - xoffset/x/y 等：贴图内坐标 + 记录 ink 相对基线的 xo/yo
-     *  - xadvance = measureText 宽度 + spacing（关键：不使用裁剪宽度）
-     *  - 贴图引用名：单页 outName.png；多页 outName_i.png（无补零）
-     */
     private fun buildFNTAlignedWithOriginal(
         outName: String,
         fontSize: Int,
-        spacing: Float,
         padding: Int,
         pageW: Int,
         pageH: Int,
@@ -1043,49 +1055,26 @@ class MainActivity : AppCompatActivity() {
         append("  </chars>\n</font>")
     }
 
-    private fun shareZip(zipFile: File) {
-        try {
-            val uri = FileProvider.getUriForFile(this, "${packageName}.provider", zipFile)
-            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                type = "application/zip"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }, "分享字体包"))
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(this, "分享失败：${zipFile.absolutePath}", Toast.LENGTH_LONG).show()
-        }
-    }
+    // ---------- 工具 ----------
 
-    /** 让用户选择目标位置（默认 Download/FontPack_xxx.zip），直接把生成的包写过去 */
-    private fun exportZip() {
-        val zip = lastZipFile ?: run {
-            Toast.makeText(this, "请先生成字体包", Toast.LENGTH_SHORT).show()
-            return
-        }
-        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/zip"
-            putExtra(Intent.EXTRA_TITLE, zip.name)
-        }, REQ_EXPORT)
-    }
-
-    private fun copyZipTo(uri: Uri): Boolean = try {
-        contentResolver.openOutputStream(uri)?.use { out ->
-            lastZipFile!!.inputStream().use { it.copyTo(out) }
-        } != null
-    } catch (e: Exception) {
-        e.printStackTrace()
-        false
-    }
+    private fun String?.ifNullOrEmpty(f: () -> String): String = if (isNullOrEmpty()) f() else this
 
     companion object {
+        private const val PREFS_NAME = "tefont"
+        private const val KEY_THEME = "theme"
+        private const val KEY_AUTHOR = "author"
+        private const val THEME_SYSTEM = "system"
+        private const val THEME_LIGHT = "light"
+        private const val THEME_DARK = "dark"
+
         private const val PACK_INFO_ENTRY = "pack_info.json"
         private const val REQ_FONT = 10
         private const val REQ_ASCII = 11
         private const val REQ_DIGITS = 12
         private const val REQ_FULL = 13
-        private const val REQ_SLOT_FONT_BASE = 20 // + 槽位索引
+        private const val REQ_SLOT_FONT_BASE = 20
         private const val REQ_EXPORT = 30
+        private const val ID_TAB_GENERATE = 1
+        private const val ID_TAB_SETTINGS = 2
     }
 }
