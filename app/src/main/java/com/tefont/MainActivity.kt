@@ -2,6 +2,7 @@ package com.tefont
 
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -59,6 +60,134 @@ private fun slotRes(pos: Int): Int = when (pos) {
     2, 3 -> R.raw.builtin_chars_digits
     else -> R.raw.builtin_chars_ascii
 }
+
+// ---------- 配色方案（每个方案提供 浅色 / 深色 两套） ----------
+
+private fun sch(
+    light: Map<String, String>,
+    dark: Map<String, String>
+): Pair<Map<String, Int>, Map<String, Int>> =
+    light.mapValues { Color.parseColor(it.value) } to dark.mapValues { Color.parseColor(it.value) }
+
+private val SCHEME_LABELS = listOf(
+    "nord" to "Nord",
+    "catppuccin" to "Catppuccin",
+    "solarized" to "Solarized",
+    "gruvbox" to "Gruvbox",
+    "dracula" to "Dracula",
+    "rosepine" to "Rosé Pine"
+)
+
+private val SCHEMES: Map<String, Pair<Map<String, Int>, Map<String, Int>>> = mapOf(
+    "nord" to sch(
+        mapOf(
+            "md_background" to "#ECEFF4", "md_surface" to "#E5E9F0",
+            "md_surface_variant" to "#D8DEE9", "md_on_surface" to "#2E3440",
+            "md_on_surface_variant" to "#4C566A", "md_primary" to "#5E81AC",
+            "md_on_primary" to "#FFFFFF", "md_primary_container" to "#DCE6F1",
+            "md_on_primary_container" to "#2E3440", "md_secondary_container" to "#DCE6F1",
+            "md_on_secondary_container" to "#2E3440"
+        ),
+        mapOf(
+            "md_background" to "#2E3440", "md_surface" to "#3B4252",
+            "md_surface_variant" to "#434C5E", "md_on_surface" to "#ECEFF4",
+            "md_on_surface_variant" to "#D8DEE9", "md_primary" to "#88C0D0",
+            "md_on_primary" to "#2E3440", "md_primary_container" to "#3B5368",
+            "md_on_primary_container" to "#ECEFF4", "md_secondary_container" to "#41506B",
+            "md_on_secondary_container" to "#ECEFF4"
+        )
+    ),
+    "catppuccin" to sch(
+        mapOf(
+            "md_background" to "#EFF1F5", "md_surface" to "#E6E9EF",
+            "md_surface_variant" to "#DCE0E8", "md_on_surface" to "#4C4F69",
+            "md_on_surface_variant" to "#6C6F85", "md_primary" to "#1E66F5",
+            "md_on_primary" to "#FFFFFF", "md_primary_container" to "#D3E0FA",
+            "md_on_primary_container" to "#4C4F69", "md_secondary_container" to "#E4E7F0",
+            "md_on_secondary_container" to "#4C4F69"
+        ),
+        mapOf(
+            "md_background" to "#24273A", "md_surface" to "#1E2030",
+            "md_surface_variant" to "#363A4F", "md_on_surface" to "#CAD3F5",
+            "md_on_surface_variant" to "#A5ADCB", "md_primary" to "#8AADF4",
+            "md_on_primary" to "#24273A", "md_primary_container" to "#37415F",
+            "md_on_primary_container" to "#CAD3F5", "md_secondary_container" to "#414559",
+            "md_on_secondary_container" to "#CAD3F5"
+        )
+    ),
+    "solarized" to sch(
+        mapOf(
+            "md_background" to "#FDF6E3", "md_surface" to "#EEE8D5",
+            "md_surface_variant" to "#E4DDC8", "md_on_surface" to "#073642",
+            "md_on_surface_variant" to "#657B83", "md_primary" to "#268BD2",
+            "md_on_primary" to "#FDF6E3", "md_primary_container" to "#D8E6F1",
+            "md_on_primary_container" to "#073642", "md_secondary_container" to "#E4DDC8",
+            "md_on_secondary_container" to "#073642"
+        ),
+        mapOf(
+            "md_background" to "#002B36", "md_surface" to "#073642",
+            "md_surface_variant" to "#0E4C58", "md_on_surface" to "#FDF6E3",
+            "md_on_surface_variant" to "#93A1A1", "md_primary" to "#268BD2",
+            "md_on_primary" to "#002B36", "md_primary_container" to "#144E6B",
+            "md_on_primary_container" to "#FDF6E3", "md_secondary_container" to "#0E4C58",
+            "md_on_secondary_container" to "#FDF6E3"
+        )
+    ),
+    "gruvbox" to sch(
+        mapOf(
+            "md_background" to "#FBF1C7", "md_surface" to "#F2E5BC",
+            "md_surface_variant" to "#EBDBB2", "md_on_surface" to "#3C3836",
+            "md_on_surface_variant" to "#665C54", "md_primary" to "#076678",
+            "md_on_primary" to "#FBF1C7", "md_primary_container" to "#D9E0C3",
+            "md_on_primary_container" to "#3C3836", "md_secondary_container" to "#EBDBB2",
+            "md_on_secondary_container" to "#3C3836"
+        ),
+        mapOf(
+            "md_background" to "#282828", "md_surface" to "#32302F",
+            "md_surface_variant" to "#504945", "md_on_surface" to "#FBF1C7",
+            "md_on_surface_variant" to "#BDAE93", "md_primary" to "#83A598",
+            "md_on_primary" to "#282828", "md_primary_container" to "#3F4B45",
+            "md_on_primary_container" to "#FBF1C7", "md_secondary_container" to "#504945",
+            "md_on_secondary_container" to "#FBF1C7"
+        )
+    ),
+    "dracula" to sch(
+        mapOf(
+            "md_background" to "#F8F8F2", "md_surface" to "#EFF0EB",
+            "md_surface_variant" to "#E3E5DE", "md_on_surface" to "#282A36",
+            "md_on_surface_variant" to "#6272A4", "md_primary" to "#6272A4",
+            "md_on_primary" to "#F8F8F2", "md_primary_container" to "#D9DEEA",
+            "md_on_primary_container" to "#282A36", "md_secondary_container" to "#E3E5DE",
+            "md_on_secondary_container" to "#282A36"
+        ),
+        mapOf(
+            "md_background" to "#282A36", "md_surface" to "#21222C",
+            "md_surface_variant" to "#44475A", "md_on_surface" to "#F8F8F2",
+            "md_on_surface_variant" to "#BCC4DC", "md_primary" to "#BD93F9",
+            "md_on_primary" to "#282A36", "md_primary_container" to "#44475A",
+            "md_on_primary_container" to "#F8F8F2", "md_secondary_container" to "#3B3E52",
+            "md_on_secondary_container" to "#F8F8F2"
+        )
+    ),
+    "rosepine" to sch(
+        mapOf(
+            "md_background" to "#FAF4ED", "md_surface" to "#FFFAF3",
+            "md_surface_variant" to "#F2E9E1", "md_on_surface" to "#575279",
+            "md_on_surface_variant" to "#797593", "md_primary" to "#907AA9",
+            "md_on_primary" to "#FAF4ED", "md_primary_container" to "#EBDFEF",
+            "md_on_primary_container" to "#575279", "md_secondary_container" to "#F2E9E1",
+            "md_on_secondary_container" to "#575279"
+        ),
+        mapOf(
+            "md_background" to "#191724", "md_surface" to "#1F1D2E",
+            "md_surface_variant" to "#26233A", "md_on_surface" to "#E0DEF4",
+            "md_on_surface_variant" to "#908CAA", "md_primary" to "#C4A7E7",
+            "md_on_primary" to "#191724", "md_primary_container" to "#342E4A",
+            "md_on_primary_container" to "#E0DEF4", "md_secondary_container" to "#2A2740",
+            "md_on_secondary_container" to "#E0DEF4"
+        )
+    )
+)
 
 data class Placement(val page: Int, val x: Int, val y: Int, val w: Int, val h: Int)
 
@@ -118,7 +247,8 @@ class MainActivity : AppCompatActivity() {
     private var currentPage = 0
 
     // 设置页控件
-    private lateinit var themeGroup: RadioGroup
+    private lateinit var paletteGroup: RadioGroup
+    private lateinit var modeGroup: RadioGroup
     private lateinit var authorPrefEdit: TextInputEditText
 
     private var fontLoaded = false
@@ -136,7 +266,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        applySavedTheme()
+        applyTheme()
         super.onCreate(savedInstanceState)
         buildUi()
         refreshCharSummary()
@@ -144,25 +274,44 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- 设置 ----------
 
-    private fun applySavedTheme() {
-        when (prefs.getString(KEY_THEME, THEME_SYSTEM)) {
-            THEME_LIGHT -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-            THEME_DARK -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-            else -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+    @Volatile
+    private var currentPalette: Map<String, Int> = emptyMap()
+
+    private fun isSystemDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun applyTheme() {
+        val scheme = SCHEMES[prefs.getString(KEY_PALETTE, "nord")] ?: SCHEMES.getValue("nord")
+        val dark = when (prefs.getString(KEY_MODE, THEME_SYSTEM)) {
+            THEME_LIGHT -> false
+            THEME_DARK -> true
+            else -> isSystemDark()
         }
+        currentPalette = if (dark) scheme.second else scheme.first
+        AppCompatDelegate.setDefaultNightMode(
+            when (prefs.getString(KEY_MODE, THEME_SYSTEM)) {
+                THEME_LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
+                THEME_DARK -> AppCompatDelegate.MODE_NIGHT_YES
+                else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            }
+        )
     }
 
     private fun defaultAuthor(): String = prefs.getString(KEY_AUTHOR, "").orEmpty()
 
     private fun saveSettings(): Boolean {
-        val sel = themeGroup.checkedRadioButtonId
-        val rb = themeGroup.findViewById<RadioButton>(sel)
-        if (rb == null || rb.tag !is String) return false
+        val pal = SCHEMES.keys.firstOrNull { key ->
+            paletteGroup.findViewById<RadioButton>(key.hashCode()).isChecked
+        } ?: return false
+        val modeRb = modeGroup.findViewById<RadioButton>(modeGroup.checkedRadioButtonId)
+        if (modeRb == null || modeRb.tag !is String) return false
         prefs.edit()
-            .putString(KEY_THEME, rb.tag as String)
+            .putString(KEY_PALETTE, pal)
+            .putString(KEY_MODE, modeRb.tag as String)
             .putString(KEY_AUTHOR, authorPrefEdit.text?.toString()?.trim().orEmpty())
             .apply()
-        applySavedTheme()
+        applyTheme()
         return true
     }
 
@@ -171,7 +320,10 @@ class MainActivity : AppCompatActivity() {
     // ============================================================
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
-    private fun colorOf(resId: Int): Int = ContextCompat.getColor(this, resId)
+    private fun colorOf(resId: Int): Int {
+        val name = resources.getResourceEntryName(resId)
+        return currentPalette[name] ?: ContextCompat.getColor(this, resId)
+    }
 
     private fun buildUi() {
         val column = LinearLayout(this).apply {
@@ -402,31 +554,56 @@ class MainActivity : AppCompatActivity() {
 
         setColumn.addView(card { add ->
             val box = innerColumn()
-            box.addView(sectionTitle("主题"))
+            box.addView(sectionTitle("配色方案"))
 
-            themeGroup = RadioGroup(this@MainActivity).apply {
+            paletteGroup = RadioGroup(this@MainActivity).apply {
                 orientation = RadioGroup.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply { topMargin = dp(6) }
             }
-            val currentTheme = prefs.getString(KEY_THEME, THEME_SYSTEM)
-            listOf(
-                Triple("跟随系统", THEME_SYSTEM, null),
-                Triple("Nord 浅色", THEME_LIGHT, null),
-                Triple("Nord 深色", THEME_DARK, null)
-            ).forEach { (label, tag, _) ->
-                themeGroup.addView(RadioButton(this@MainActivity).apply {
-                    id = View.generateViewId()
+            val currentPaletteKey = prefs.getString(KEY_PALETTE, "nord")
+            SCHEME_LABELS.forEach { (key, label) ->
+                paletteGroup.addView(RadioButton(this@MainActivity).apply {
+                    id = key.hashCode()
                     this.text = label
-                    this.tag = tag
-                    isChecked = currentTheme == tag
+                    isChecked = currentPaletteKey == key
                     setTextColor(colorOf(R.color.md_on_surface))
                     textSize = 15f
                     setPadding(dp(4), dp(6), dp(4), dp(6))
                 })
             }
-            box.addView(themeGroup)
+            box.addView(paletteGroup)
+            add.addView(box)
+        })
+
+        setColumn.addView(card { add ->
+            val box = innerColumn()
+            box.addView(sectionTitle("明暗模式"))
+
+            modeGroup = RadioGroup(this@MainActivity).apply {
+                orientation = RadioGroup.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(6) }
+            }
+            val currentMode = prefs.getString(KEY_MODE, THEME_SYSTEM)
+            listOf(
+                Triple("跟随系统", THEME_SYSTEM, null),
+                Triple("浅色", THEME_LIGHT, null),
+                Triple("深色", THEME_DARK, null)
+            ).forEach { (label, tag, _) ->
+                modeGroup.addView(RadioButton(this@MainActivity).apply {
+                    id = View.generateViewId()
+                    this.text = label
+                    this.tag = tag
+                    isChecked = currentMode == tag
+                    setTextColor(colorOf(R.color.md_on_surface))
+                    textSize = 15f
+                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                })
+            }
+            box.addView(modeGroup)
             add.addView(box)
         })
 
@@ -1177,7 +1354,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PREFS_NAME = "tefont"
-        private const val KEY_THEME = "theme"
+        private const val KEY_PALETTE = "palette"
+        private const val KEY_MODE = "mode"
         private const val KEY_AUTHOR = "author"
         private const val THEME_SYSTEM = "system"
         private const val THEME_LIGHT = "light"
