@@ -268,6 +268,10 @@ class MainActivity : AppCompatActivity() {
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         applyTheme()
         super.onCreate(savedInstanceState)
+        val bg = currentPalette["md_background"] ?: 0
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg))
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
         buildUi()
         refreshCharSummary()
     }
