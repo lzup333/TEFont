@@ -12,7 +12,6 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -991,7 +990,6 @@ class MainActivity : AppCompatActivity() {
     /** 选字 paint：主字体缺字且 fallback 字体可渲染时用 fallback，否则用主字体（交由系统回退） */
     private fun pickPaint(ch: Char, mainPaint: Paint, fbPaint: Paint?): Paint {
         if (fbPaint == null) return mainPaint
-        if (Build.VERSION.SDK_INT < 23) return mainPaint
         val s = ch.toString()
         return if (!mainPaint.hasGlyph(s) && fbPaint.hasGlyph(s)) fbPaint else mainPaint
     }
