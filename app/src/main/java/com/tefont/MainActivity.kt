@@ -923,8 +923,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isValidFont(bytes: ByteArray): Boolean =
-        runCatching { Typeface.createFromFile(materializeFont(bytes, "_tmp_validate.ttf")) }.isSuccess
+    private fun isValidFont(bytes: ByteArray): Boolean {
+        if (bytes.size < 12) return false
+        // sfnt 容器魔数：TrueType / OpenType(CFF) / Collection / 'true'
+        val head = bytes[0].toInt() and 0xFF or
+            ((bytes[1].toInt() and 0xFF) shl 8) or
+            ((bytes[2].toInt() and 0xFF) shl 16) or
+            ((bytes[3].toInt() and 0xFF) shl 24)
+        val magicOk = head == 0x00010000 || head == 0x4F54544F /*OTTO*/ ||
+            head == 0x74636674 /*ttcf*/ || head == 0x74727565 /*true*/
+        if (!magicOk) return false
+        // 再尝试实际解析，失败即无效
+        return runCatching {
+            val tf = Typeface.createFromFile(materializeFont(bytes, "_tmp_validate.ttf"))
+            val p = Paint(Paint.ANTI_ALIAS_FLAG)
+            p.typeface = tf
+            p.measureText("Aa1中")
+            true
+        }.getOrDefault(false)
+    }
 
     private fun loadFont(bytes: ByteArray, fileName: String?) {
         if (!isValidFont(bytes)) {
