@@ -973,11 +973,127 @@ class MainActivity : AppCompatActivity() {
         if (this::previewView.isInitialized) previewView.invalidate()
     }
 
-    /** 选字 paint：主字体缺字且 fallback 字体可渲染时用 fallback，否则用主字体（交由系统回退） */
-    private fun pickPaint(ch: Char, mainPaint: Paint, fbPaint: Paint?): Paint {
-        if (fbPaint == null) return mainPaint
-        val s = ch.toString()
-        return if (!mainPaint.hasGlyph(s) && fbPaint.hasGlyph(s)) fbPaint else mainPaint
+    /**
+     * 通过解析字体文件的 cmap 表判断字符覆盖情况。
+     * Paint.hasGlyph 会把系统回退字体算进去，无法用来判断主字体本身是否缺字。
+     */
+    private class FontGlyphCoverage(fontPath: String) {
+        private var sub4: ByteArray? = null
+        private var groups12: IntArray? = null
+
+        init { runCatching { parse(fontPath) } }
+
+        private fun parse(path: String) {
+            java.io.RandomAccessFile(path, "r").use { raf ->
+                fun u16() = raf.readUnsignedShort()
+                fun i32() = raf.readInt()
+                var base = 0L
+                if (i32() == 0x74746366) { // 'ttcf'
+                    raf.seek(12)
+                    base = i32().toLong() and 0xFFFFFFFFL
+                }
+                raf.seek(base + 4)
+                val numTables = u16()
+                var cmapOff = -1L
+                var cmapLen = 0
+                repeat(numTables) { i ->
+                    raf.seek(base + 12 + i * 16)
+                    val tag = ByteArray(4); raf.readFully(tag)
+                    i32(); val off = i32(); val len = i32()
+                    if (String(tag, Charsets.US_ASCII) == "cmap") {
+                        cmapOff = off.toLong() and 0xFFFFFFFFL
+                        cmapLen = len
+                    }
+                }
+                if (cmapOff < 0 || cmapLen <= 0) return
+                val cmap = ByteArray(cmapLen)
+                raf.seek(cmapOff)
+                raf.readFully(cmap)
+                fun bu16(o: Int) = ((cmap[o].toInt() and 0xFF) shl 8) or (cmap[o + 1].toInt() and 0xFF)
+                fun bi32(o: Int) = ((cmap[o].toInt() and 0xFF) shl 24) or ((cmap[o + 1].toInt() and 0xFF) shl 16) or
+                    ((cmap[o + 2].toInt() and 0xFF) shl 8) or (cmap[o + 3].toInt() and 0xFF)
+                val n = bu16(2)
+                var best4 = -1
+                var best12 = -1
+                for (i in 0 until n) {
+                    val rec = 4 + i * 8
+                    if (rec + 8 > cmap.size) break
+                    val pid = bu16(rec); val eid = bu16(rec + 2); val off = bi32(rec + 4)
+                    if (off < 0 || off + 2 > cmap.size) continue
+                    when (bu16(off)) {
+                        12 -> if (best12 < 0 && (pid == 0 || (pid == 3 && eid == 10))) best12 = off
+                        4 -> if (best4 < 0 && (pid == 0 || (pid == 3 && eid == 1))) best4 = off
+                    }
+                }
+                if (best12 >= 0 && best12 + 16 <= cmap.size) {
+                    val ng = bi32(best12 + 12)
+                    val arr = IntArray(ng * 2)
+                    for (g in 0 until ng) {
+                        val go = best12 + 16 + g * 12
+                        if (go + 12 > cmap.size) break
+                        arr[g * 2] = bi32(go)
+                        arr[g * 2 + 1] = bi32(go + 4)
+                    }
+                    groups12 = arr
+                } else if (best4 >= 0) {
+                    val segCountX2 = bu16(best4 + 6)
+                    val size = minOf(16 + segCountX2 * 4, cmap.size - best4)
+                    if (size > 14) sub4 = cmap.copyOfRange(best4, best4 + size)
+                }
+            }
+        }
+
+        fun covers(ch: Char): Boolean {
+            val cp = ch.code
+            if (cp > 0xFFFF) {
+                val g = groups12 ?: return false
+                for (i in g.indices step 2) if (cp in g[i]..g[i + 1]) return true
+                return false
+            }
+            sub4?.let { return covers4(cp, it) }
+            val g = groups12 ?: return true // cmap 解析失败时保守处理：按覆盖算，走原行为
+            for (i in g.indices step 2) if (cp in g[i]..g[i + 1]) return true
+            return false
+        }
+
+        private fun covers4(cp: Int, b: ByteArray): Boolean {
+            fun bu16(o: Int) = ((b[o].toInt() and 0xFF) shl 8) or (b[o + 1].toInt() and 0xFF)
+            val segCount = bu16(6) / 2
+            val endOff = 14
+            val startOff = endOff + segCount * 2 + 2
+            val deltaOff = startOff + segCount * 2
+            val rangeOff = deltaOff + segCount * 2
+            for (i in 0 until segCount) {
+                val end = bu16(endOff + i * 2)
+                if (cp > end) continue
+                val start = bu16(startOff + i * 2)
+                if (cp < start) return false
+                val ro = bu16(rangeOff + i * 2)
+                if (ro == 0) return ((cp + bu16(deltaOff + i * 2)) and 0xFFFF) != 0
+                val idx = rangeOff + i * 2 + ro + (cp - start) * 2
+                if (idx + 1 >= b.size) return false
+                return bu16(idx) != 0
+            }
+            return false
+        }
+    }
+
+    private val coverageCache = mutableMapOf<String, FontGlyphCoverage>()
+
+    private fun coverageOf(path: String?): FontGlyphCoverage? =
+        path?.let { coverageCache.getOrPut(it) { FontGlyphCoverage(it) } }
+
+    /** 选字 paint：主字体自身缺字（cmap 不含该码位）且 fallback 字体可渲染时用 fallback */
+    private fun pickPaint(
+        ch: Char,
+        mainPaint: Paint,
+        fbPaint: Paint?,
+        mainCov: FontGlyphCoverage?,
+        fbCov: FontGlyphCoverage?
+    ): Paint {
+        if (fbPaint == null || fbCov == null) return mainPaint
+        val mainHas = mainCov?.covers(ch) ?: true
+        return if (!mainHas && fbCov.covers(ch)) fbPaint else mainPaint
     }
 
     private fun buildPaint(typeface: Typeface, fs: Int): Paint =
@@ -990,13 +1106,17 @@ class MainActivity : AppCompatActivity() {
     private inner class FontPreviewView(context: android.content.Context) : View(context) {
         private val mainPaint = buildPaint(Typeface.DEFAULT, 26).apply { color = colorOf(R.color.md_on_surface) }
         private var fbPaint: Paint? = null
+        private var mainCov: FontGlyphCoverage? = null
+        private var fbCov: FontGlyphCoverage? = null
 
         fun rebuildPaints() {
             val mainTf = cachedFontPath?.let { runCatching { Typeface.createFromFile(it) }.getOrNull() }
                 ?: Typeface.DEFAULT
             mainPaint.typeface = mainTf
+            mainCov = coverageOf(cachedFontPath)
             val fbTf = fallbackFontPath?.let { runCatching { Typeface.createFromFile(it) }.getOrNull() }
             fbPaint = fbTf?.let { buildPaint(it, 26).apply { color = colorOf(R.color.md_on_surface) } }
+            fbCov = if (fbPaint != null) coverageOf(fallbackFontPath) else null
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -1017,7 +1137,7 @@ class MainActivity : AppCompatActivity() {
             lines.forEach { line ->
                 var x = dp(4).toFloat()
                 line.forEach { ch ->
-                    val p = pickPaint(ch, mainPaint, fbPaint)
+                    val p = pickPaint(ch, mainPaint, fbPaint, mainCov, fbCov)
                     canvas.drawText(ch.toString(), x, y.toFloat(), p)
                     x += p.measureText(ch.toString())
                 }
@@ -1037,14 +1157,31 @@ class MainActivity : AppCompatActivity() {
         raw.toList().distinct().filter { it != '\uFEFF' }
 
     private fun customReady(): Boolean =
-        asciiChars.isNotEmpty() && digitChars.isNotEmpty() && fullChars.isNotEmpty()
+        !useBuiltinLibs && (asciiChars.isNotEmpty() || digitChars.isNotEmpty() || fullChars.isNotEmpty())
 
-    private fun customCombined(): List<Char> =
-        cleanChars(asciiChars.toString() + digitChars.toString() + fullChars.toString())
+    /** 槽位实际使用的字符集：自定义字库按文件逐项生效，未提供的类别回退到内置字库 */
+    private fun charsForSlot(pos: Int): List<Char> {
+        val res = slotRes(pos)
+        val custom = when (res) {
+            R.raw.builtin_chars_full -> fullChars
+            R.raw.builtin_chars_digits -> digitChars
+            else -> asciiChars
+        }
+        val source = if (custom.isNotEmpty() && customReady()) custom.toString() else resText(res)
+        return cleanChars(source)
+    }
+
+    private fun customUsedFor(pos: Int): Boolean {
+        val custom = when (slotRes(pos)) {
+            R.raw.builtin_chars_full -> fullChars
+            R.raw.builtin_chars_digits -> digitChars
+            else -> asciiChars
+        }
+        return customReady() && custom.isNotEmpty()
+    }
 
     private fun refreshCharSummary() {
-        val cc = if (!useBuiltinLibs && customReady()) customCombined().size else -1
-        SLOTS.indices.forEach { updateSlotRow(it, cc) }
+        SLOTS.indices.forEach { updateSlotRow(it) }
     }
 
     private fun builtinName(resId: Int): String = when (resId) {
@@ -1061,11 +1198,11 @@ class MainActivity : AppCompatActivity() {
         return (o?.first ?: s.size) to (o?.second ?: s.spacing)
     }
 
-    private fun updateSlotRow(idx: Int, customCharCount: Int) {
+    private fun updateSlotRow(idx: Int) {
         if (!this::customSection.isInitialized) return
         val s = SLOTS[idx]
         val (fs, sp) = slotEffective(idx)
-        val src = if (!useBuiltinLibs && customReady()) "自定义($customCharCount)" else builtinName(slotRes(idx))
+        val src = if (customUsedFor(idx)) "自定义(${charsForSlot(idx).size})" else builtinName(slotRes(idx))
         val mark = if (idx in slotOverrides) " ✎" else ""
         val fontTag = if (idx in slotFontNames) " · 字体:${slotFontNames[idx]}" else ""
         slotSummaries[idx]?.text = "$src ｜ ${fs}px · $sp$mark$fontTag"
@@ -1121,8 +1258,7 @@ class MainActivity : AppCompatActivity() {
                 val sp = spaceEdit.text?.toString()?.toFloatOrNull()
                 if (fs == null && sp == null) slotOverrides.remove(idx)
                 else slotOverrides[idx] = fs to sp
-                val cc = if (!useBuiltinLibs && customReady()) customCombined().size else -1
-                updateSlotRow(idx, cc)
+                updateSlotRow(idx)
                 d.dismiss()
             }
             .setNegativeButton("取消", null)
@@ -1264,8 +1400,6 @@ class MainActivity : AppCompatActivity() {
         }
         val author = authorInput.text?.toString()?.trim().takeUnless { it.isNullOrEmpty() } ?: defaultAuthor()
         val desc = descInput.text?.toString()?.trim() ?: ""
-        val custom = !useBuiltinLibs && customReady()
-        val customChars = if (custom) customCombined() else emptyList()
 
         val results = mutableListOf<GeneratedSlot>()
         val targetIdx = checkedSlots()
@@ -1277,7 +1411,7 @@ class MainActivity : AppCompatActivity() {
         targetIdx.forEachIndexed { pos, n ->
             val slot = SLOTS[n]
             val (fs, spacing) = slotEffective(n)
-            val chars = if (custom) customChars else cleanChars(resText(slotRes(n)))
+            val chars = charsForSlot(n)
             if (chars.isEmpty()) return@forEachIndexed
 
             handler.post { progressLabel.text = "${slot.key} (${pos + 1}/$nTargets)…" }
@@ -1286,16 +1420,18 @@ class MainActivity : AppCompatActivity() {
             val fontPath = if (n in slotFontFiles) slotFontFiles[n]!!
             else makeFontFile()
             val mainPaint = buildPaint(Typeface.createFromFile(fontPath), fs)
+            val mainCov = coverageOf(fontPath)
             // 自定义 Fallback：主字体缺字时优先使用，其次才是系统字体
             val fbPaint = fallbackFontPath?.let { path ->
                 runCatching {
                     buildPaint(Typeface.createFromFile(path), fs)
                 }.getOrNull()
             }
+            val fbCov = if (fbPaint != null) coverageOf(fallbackFontPath) else null
 
             val renders = mutableListOf<CharRender>()
             chars.forEachIndexed { index, ch ->
-                renderChar(ch, pickPaint(ch, mainPaint, fbPaint), fs)?.let { renders.add(it) }
+                renderChar(ch, pickPaint(ch, mainPaint, fbPaint, mainCov, fbCov), fs)?.let { renders.add(it) }
                 if ((index + 1) % 800 == 0 || index == chars.lastIndex) {
                     val p = ((pos * 90f / nTargets) + index * (50f / nTargets) / chars.size).toInt().coerceIn(0, 95)
                     handler.post {
