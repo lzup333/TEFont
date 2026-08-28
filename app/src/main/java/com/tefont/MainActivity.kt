@@ -212,6 +212,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fontStatusText: TextView
     private lateinit var fallbackStatusText: TextView
     private lateinit var previewView: FontPreviewView
+    private lateinit var previewInput: TextInputEditText
+    private var previewText: String = DEFAULT_PREVIEW_TEXT
     private lateinit var customSection: LinearLayout
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
@@ -229,6 +231,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var progressIndicator: LinearProgressIndicator
     private lateinit var progressLabel: TextView
+    private lateinit var outputCard: MaterialCardView
     private lateinit var shareBar: LinearLayout
     private lateinit var outputCardArea: LinearLayout
 
@@ -516,7 +519,7 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        outputColumn.addView(card(bgRes = R.color.md_primary_container) { add ->
+        outputCard = card(bgRes = R.color.md_primary_container) { add ->
             outputCardArea = innerColumn()
             progressIndicator = LinearProgressIndicator(this@MainActivity).apply {
                 max = 100
@@ -534,27 +537,44 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             outputCardArea.addView(progressLabel)
+            add.addView(outputCardArea)
+        }.apply { visibility = View.GONE }
+        outputColumn.addView(outputCard)
 
+        // ---------- 预览页 ----------
+
+        previewColumn.addView(card { add ->
+            val box = innerColumn()
+            box.addView(sectionTitle("字体预览"))
+            previewInput = inputField(box, "自定义预览文本（每行一段）", maxLines = 4).apply {
+                setText(DEFAULT_PREVIEW_TEXT)
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        previewText = s?.toString().orEmpty()
+                        refreshPreview()
+                    }
+                })
+            }
+            previewView = FontPreviewView(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(8) }
+            }
+            box.addView(previewView)
+            add.addView(box)
+        })
+
+        previewColumn.addView(card { add ->
+            val box = innerColumn()
             shareBar = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 visibility = View.GONE
             }
             shareBar.addView(bannerButton("分享字体包 ZIP", filled = false) { lastZipFile?.let(::shareZip) })
             shareBar.addView(bannerButton("导出字体包到本地", filled = false) { exportZip() })
-            outputCardArea.addView(shareBar)
-            add.addView(outputCardArea)
-        })
-
-        // ---------- 预览页 ----------
-
-        previewColumn.addView(card { add ->
-            val box = innerColumn()
-            previewView = FontPreviewView(this@MainActivity).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(240)
-                )
-            }
-            box.addView(previewView)
+            box.addView(shareBar)
             add.addView(box)
         })
 
@@ -951,15 +971,25 @@ class MainActivity : AppCompatActivity() {
             rebuildPaints()
             mainPaint.textSize = 44f
             fbPaint?.textSize = 44f
-            var y = dp(12) + 44
-            DEFAULT_PREVIEW_TEXT.lines().forEach { line ->
+            val lineH = 62
+            val top = dp(12)
+            val lines = previewText.lines()
+            (layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                val needed = top + 44 + lines.size * lineH + dp(8)
+                if (lp.height != needed) {
+                    lp.height = needed
+                    requestLayout()
+                }
+            }
+            var y = top + 44
+            lines.forEach { line ->
                 var x = dp(4).toFloat()
                 line.forEach { ch ->
                     val p = pickPaint(ch, mainPaint, fbPaint)
                     canvas.drawText(ch.toString(), x, y.toFloat(), p)
                     x += p.measureText(ch.toString())
                 }
-                y += 62
+                y += lineH
             }
         }
     }
@@ -1079,6 +1109,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         isGenerating = true
+        outputCard.visibility = View.VISIBLE
         progressIndicator.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(0, true)
         progressLabel.visibility = View.VISIBLE
