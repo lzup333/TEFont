@@ -90,6 +90,15 @@ class MainActivity : AppCompatActivity() {
     private val slotFontBytes = mutableMapOf<Int, ByteArray>()
     private val slotFontNames = mutableMapOf<Int, String>()
     private val slotSummaries = mutableMapOf<Int, TextView>()
+    private val slotChecks = mutableMapOf<Int, com.google.android.material.checkbox.MaterialCheckBox>()
+
+    private fun checkedSlots(): List<Int> =
+        SLOTS.indices.filter { slotChecks[it]?.isChecked == true }
+
+    private fun updateGenButtonText() {
+        if (this::genButton.isInitialized && !isGenerating)
+            genButton.text = "🚀 开始生成（${checkedSlots().size} 个槽位）"
+    }
 
     private lateinit var nameInput: TextInputEditText
     private lateinit var authorInput: TextInputEditText
@@ -292,6 +301,12 @@ class MainActivity : AppCompatActivity() {
                     ).apply { bottomMargin = dp(6) }
                     setOnClickListener { showSlotEditor(i) }
                 }
+                val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
+                    isChecked = true
+                    setOnCheckedChangeListener { _, _ -> updateGenButtonText() }
+                }
+                row.addView(check)
+                slotChecks[i] = check
                 row.addView(TextView(this@MainActivity).apply {
                     text = s.key
                     textSize = 15f
@@ -351,6 +366,7 @@ class MainActivity : AppCompatActivity() {
                 setTypeface(typeface, Typeface.BOLD)
             }
             outputCardArea.addView(genButton)
+            updateGenButtonText()
 
             shareBar = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -770,8 +786,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun generatePack() {
         if (isGenerating || !fontLoaded) return
+        val targets = checkedSlots()
+        if (targets.isEmpty()) {
+            Toast.makeText(this, "请至少勾选一个槽位", Toast.LENGTH_SHORT).show()
+            return
+        }
         isGenerating = true
         genButton.isEnabled = false
+        genButton.text = "⏳ 生成中…"
         progressIndicator.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(0, true)
         progressLabel.visibility = View.VISIBLE
@@ -911,17 +933,19 @@ class MainActivity : AppCompatActivity() {
         val customChars = if (custom) customCombined() else emptyList()
 
         val results = mutableListOf<GeneratedSlot>()
-        val nTargets = SLOTS.size
+        val targetIdx = checkedSlots()
+        val nTargets = targetIdx.size
         val pageW = 1024
         val pageH = 1024
         val padding = 1
 
-        SLOTS.forEachIndexed { n, slot ->
+        targetIdx.forEachIndexed { pos, n ->
+            val slot = SLOTS[n]
             val (fs, spacing) = slotEffective(n)
             val chars = if (custom) customChars else cleanChars(resText(slotRes(n)))
             if (chars.isEmpty()) return@forEachIndexed
 
-            handler.post { progressLabel.text = "${slot.key} (${n + 1}/$nTargets)…" }
+            handler.post { progressLabel.text = "${slot.key} (${pos + 1}/$nTargets)…" }
 
             // 字体：槽位独立字体优先，否则全局所选字体
             val fontPath = if (n in slotFontBytes) materializeFont(slotFontBytes[n]!!, "_tmp_slot$n.ttf")
@@ -936,7 +960,7 @@ class MainActivity : AppCompatActivity() {
             chars.forEachIndexed { index, ch ->
                 renderChar(ch, paint, fs)?.let { renders.add(it) }
                 if ((index + 1) % 800 == 0 || index == chars.lastIndex) {
-                    val p = ((n * 90f / nTargets) + index * (50f / nTargets) / chars.size).toInt().coerceIn(0, 95)
+                    val p = ((pos * 90f / nTargets) + index * (50f / nTargets) / chars.size).toInt().coerceIn(0, 95)
                     handler.post {
                         progressIndicator.setProgressCompat(p, true)
                         progressLabel.text = "${slot.key} 测量 $p%"
@@ -984,7 +1008,7 @@ class MainActivity : AppCompatActivity() {
             results.add(GeneratedSlot(slot.key, fntTmp, pageFiles, pagesRaw.toList()))
 
             handler.post {
-                progressIndicator.setProgressCompat(((n + 1) * 90f / nTargets).toInt().coerceAtMost(95), true)
+                progressIndicator.setProgressCompat(((pos + 1) * 90f / nTargets).toInt().coerceAtMost(95), true)
             }
         }
 
@@ -993,8 +1017,8 @@ class MainActivity : AppCompatActivity() {
         handler.post { progressLabel.text = "打包中..." }
         val zipFile = File(cacheDir, "FontPack_$pkgName.zip")
         ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
-            SLOTS.forEach {
-                zos.putNextEntry(ZipEntry("${it.key}/"))
+            targetIdx.forEach {
+                zos.putNextEntry(ZipEntry("${SLOTS[it].key}/"))
                 zos.closeEntry()
             }
             zos.putNextEntry(ZipEntry(PACK_INFO_ENTRY))
@@ -1034,7 +1058,7 @@ class MainActivity : AppCompatActivity() {
         shareBar.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(100, true)
         genButton.isEnabled = true
-        genButton.text = "✔ 已完成，可分享、导出或再次生成"
+        genButton.text = "✔ 已完成"
         Toast.makeText(this, "✔ 字体包已生成", Toast.LENGTH_SHORT).show()
     }
 
