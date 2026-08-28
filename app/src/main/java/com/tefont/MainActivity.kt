@@ -330,8 +330,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUi() {
+        window.decorView.setBackgroundColor(colorOf(R.color.md_background))
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setBackgroundColor(colorOf(R.color.md_background))
         }
 
         val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
