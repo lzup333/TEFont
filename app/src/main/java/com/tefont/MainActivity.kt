@@ -298,25 +298,24 @@ class MainActivity : AppCompatActivity() {
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                     ).apply { bottomMargin = dp(6) }
                 }
-                val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
-                    isChecked = true
-                    setOnCheckedChangeListener { _, _ -> updateGenButtonText() }
-                }
-                row.addView(check)
-                slotChecks[i] = check
-
                 val pill = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     background = roundBg(colorOf(R.color.md_secondary_container), dp(14))
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     layoutParams = LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-                    ).apply { marginStart = dp(4) }
+                    )
                     setOnClickListener { showSlotEditor(i) }
                 }
                 pill.addView(LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
+                    val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
+                        isChecked = true
+                        setOnCheckedChangeListener { _, _ -> updateGenButtonText() }
+                    }
+                    addView(check)
+                    slotChecks[i] = check
                     addView(TextView(this@MainActivity).apply {
                         text = s.key
                         textSize = 15f
