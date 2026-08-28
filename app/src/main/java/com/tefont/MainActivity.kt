@@ -20,8 +20,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -190,8 +188,6 @@ private val SCHEMES: Map<String, Pair<Map<String, Int>, Map<String, Int>>> = map
     )
 )
 
-data class Placement(val page: Int, val x: Int, val y: Int, val w: Int, val h: Int)
-
 /**
  * 与原版 HTML 生成器对齐：所有字符在同一坐标系下度量——
  * 小画布上以 alphabetic 基线绘制（基线 y = fontSize），
@@ -216,8 +212,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fontStatusText: TextView
     private lateinit var fallbackStatusText: TextView
     private lateinit var previewView: FontPreviewView
-    private lateinit var previewInput: TextInputEditText
-    private var previewText: String = DEFAULT_PREVIEW_TEXT
     private lateinit var customSection: LinearLayout
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
@@ -229,16 +223,10 @@ class MainActivity : AppCompatActivity() {
     private fun checkedSlots(): List<Int> =
         SLOTS.indices.filter { slotChecks[it]?.isChecked == true }
 
-    private fun updateGenButtonText() {
-        if (this::genButton.isInitialized && !isGenerating)
-            genButton.text = "🚀 开始生成（${checkedSlots().size} 个槽位）"
-    }
-
     private lateinit var nameInput: TextInputEditText
     private lateinit var authorInput: TextInputEditText
     private lateinit var descInput: TextInputEditText
 
-    private lateinit var genButton: MaterialButton
     private lateinit var progressIndicator: LinearProgressIndicator
     private lateinit var progressLabel: TextView
     private lateinit var shareBar: LinearLayout
@@ -252,8 +240,8 @@ class MainActivity : AppCompatActivity() {
     private var currentPage = 0
 
     // 设置页控件
-    private lateinit var paletteGroup: RadioGroup
-    private lateinit var modeGroup: RadioGroup
+    private lateinit var paletteDropdown: com.google.android.material.textfield.MaterialAutoCompleteTextView
+    private lateinit var modeDropdown: com.google.android.material.textfield.MaterialAutoCompleteTextView
     private lateinit var authorPrefEdit: TextInputEditText
 
     private var fontLoaded = false
@@ -310,21 +298,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun defaultAuthor(): String = prefs.getString(KEY_AUTHOR, "").orEmpty()
-
-    private fun saveSettings(): Boolean {
-        val pal = SCHEMES.keys.firstOrNull { key ->
-            paletteGroup.findViewById<RadioButton>(key.hashCode()).isChecked
-        } ?: return false
-        val modeRb = modeGroup.findViewById<RadioButton>(modeGroup.checkedRadioButtonId)
-        if (modeRb == null || modeRb.tag !is String) return false
-        prefs.edit()
-            .putString(KEY_PALETTE, pal)
-            .putString(KEY_MODE, modeRb.tag as String)
-            .putString(KEY_AUTHOR, authorPrefEdit.text?.toString()?.trim().orEmpty())
-            .apply()
-        applyTheme()
-        return true
-    }
 
     // ============================================================
     // UI 构建 (Material 3 · Nord Light/Dark)
@@ -494,7 +467,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
                     isChecked = true
-                    setOnCheckedChangeListener { _, _ -> updateGenButtonText() }
                 }
                 pill.addView(check)
                 slotChecks[i] = check
@@ -563,21 +535,12 @@ class MainActivity : AppCompatActivity() {
             }
             outputCardArea.addView(progressLabel)
 
-            // 唯一的生成入口（进度条下方）
-            genButton = bannerButton("🚀 开始生成（5 个槽位）", filled = true) { generatePack() }.apply {
-                isEnabled = false
-                setTextSize(17f)
-                setTypeface(typeface, Typeface.BOLD)
-            }
-            outputCardArea.addView(genButton)
-            updateGenButtonText()
-
             shareBar = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 visibility = View.GONE
             }
-            shareBar.addView(bannerButton("📦 分享字体包 ZIP", filled = false) { lastZipFile?.let(::shareZip) })
-            shareBar.addView(bannerButton("💾 导出字体包到本地…", filled = false) { exportZip() })
+            shareBar.addView(bannerButton("分享字体包 ZIP", filled = false) { lastZipFile?.let(::shareZip) })
+            shareBar.addView(bannerButton("导出字体包到本地", filled = false) { exportZip() })
             outputCardArea.addView(shareBar)
             add.addView(outputCardArea)
         })
@@ -586,22 +549,10 @@ class MainActivity : AppCompatActivity() {
 
         previewColumn.addView(card { add ->
             val box = innerColumn()
-            box.addView(sectionTitle("预览文本"))
-            previewInput = inputField(box, "自定义预览文本（每行一段）", maxLines = 4).apply {
-                setText(DEFAULT_PREVIEW_TEXT)
-                addTextChangedListener(object : android.text.TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                    override fun afterTextChanged(s: android.text.Editable?) {
-                        previewText = s?.toString().orEmpty()
-                        refreshPreview()
-                    }
-                })
-            }
             previewView = FontPreviewView(this@MainActivity).apply {
                 layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(200)
-                ).apply { topMargin = dp(8) }
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(240)
+                )
             }
             box.addView(previewView)
             add.addView(box)
@@ -612,55 +563,37 @@ class MainActivity : AppCompatActivity() {
         setColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("配色方案"))
-
-            paletteGroup = RadioGroup(this@MainActivity).apply {
-                orientation = RadioGroup.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(6) }
+            paletteDropdown = dropdownField(
+                box,
+                SCHEME_LABELS.map { it.second },
+                SCHEME_LABELS.firstOrNull { it.first == prefs.getString(KEY_PALETTE, "nord") }?.second ?: "Nord"
+            ) { pos ->
+                val key = SCHEME_LABELS[pos].first
+                prefs.edit().putString(KEY_PALETTE, key).apply()
+                applyTheme()
+                recreate()
             }
-            val currentPaletteKey = prefs.getString(KEY_PALETTE, "nord")
-            SCHEME_LABELS.forEach { (key, label) ->
-                paletteGroup.addView(RadioButton(this@MainActivity).apply {
-                    id = key.hashCode()
-                    this.text = label
-                    isChecked = currentPaletteKey == key
-                    setTextColor(colorOf(R.color.md_on_surface))
-                    textSize = 15f
-                    setPadding(dp(4), dp(6), dp(4), dp(6))
-                })
-            }
-            box.addView(paletteGroup)
             add.addView(box)
         })
 
         setColumn.addView(card { add ->
             val box = innerColumn()
             box.addView(sectionTitle("明暗模式"))
-
-            modeGroup = RadioGroup(this@MainActivity).apply {
-                orientation = RadioGroup.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(6) }
-            }
-            val currentMode = prefs.getString(KEY_MODE, THEME_SYSTEM)
-            listOf(
+            val modeOptions = listOf(
                 Triple("跟随系统", THEME_SYSTEM, null),
                 Triple("浅色", THEME_LIGHT, null),
                 Triple("深色", THEME_DARK, null)
-            ).forEach { (label, tag, _) ->
-                modeGroup.addView(RadioButton(this@MainActivity).apply {
-                    id = View.generateViewId()
-                    this.text = label
-                    this.tag = tag
-                    isChecked = currentMode == tag
-                    setTextColor(colorOf(R.color.md_on_surface))
-                    textSize = 15f
-                    setPadding(dp(4), dp(6), dp(4), dp(6))
-                })
+            )
+            val currentMode = prefs.getString(KEY_MODE, THEME_SYSTEM)
+            modeDropdown = dropdownField(
+                box,
+                modeOptions.map { it.first },
+                modeOptions.firstOrNull { it.second == currentMode }?.first ?: "跟随系统"
+            ) { pos ->
+                prefs.edit().putString(KEY_MODE, modeOptions[pos].second).apply()
+                applyTheme()
+                recreate()
             }
-            box.addView(modeGroup)
             add.addView(box)
         })
 
@@ -669,19 +602,15 @@ class MainActivity : AppCompatActivity() {
             box.addView(sectionTitle("生成默认值"))
             authorPrefEdit = inputField(box, "默认作者名（生成时「作者名」留空则使用此值）")
             authorPrefEdit.setText(defaultAuthor())
+            authorPrefEdit.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    prefs.edit().putString(KEY_AUTHOR, s?.toString()?.trim().orEmpty()).apply()
+                }
+            })
             add.addView(box)
         })
-
-        setColumn.addView(bannerButton("💾 保存设置", filled = true) {
-            if (saveSettings()) {
-                Toast.makeText(this, "✔ 设置已保存并生效", Toast.LENGTH_SHORT).show()
-                recreate()
-            } else {
-                Toast.makeText(this, "保存失败：请选择一个主题选项", Toast.LENGTH_SHORT).show()
-            }
-        }.apply { layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
-        ) })
 
         // ---------- 向导底部步骤栏 ----------
         val wizardFooter = LinearLayout(this).apply {
@@ -734,6 +663,7 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             setOnItemSelectedListener { item ->
+                lastTab = item.itemId
                 when (item.itemId) {
                     ID_TAB_GENERATE -> {
                         wizardScrolls.forEachIndexed { i, sc -> sc.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
@@ -758,6 +688,7 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(column)
         setPage(0)
+        nav.selectedItemId = lastTab
     }
 
     private fun setPage(index: Int) {
@@ -765,7 +696,7 @@ class MainActivity : AppCompatActivity() {
         wizardScrolls.forEachIndexed { i, sc -> sc.visibility = if (i == currentPage) View.VISIBLE else View.GONE }
         btnPrevPage?.visibility = if (currentPage == 0) View.INVISIBLE else View.VISIBLE
         if (currentPage == wizardScrolls.lastIndex) {
-            btnNextPage?.text = "🚀 开始生成"
+            btnNextPage?.text = "开始生成"
             btnNextPage?.setOnClickListener { generatePack() }
         } else {
             btnNextPage?.text = "下一步 →"
@@ -858,6 +789,31 @@ class MainActivity : AppCompatActivity() {
         return edit
     }
 
+    private fun dropdownField(
+        parent: LinearLayout,
+        options: List<String>,
+        current: String,
+        onSelect: (Int) -> Unit
+    ): com.google.android.material.textfield.MaterialAutoCompleteTextView {
+        val layout = TextInputLayout(this, null,
+            com.google.android.material.R.attr.textInputOutlinedStyle).apply {
+            endIconMode = TextInputLayout.END_ICON_DROPDOWN_MENU
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+        val dropdown = com.google.android.material.textfield.MaterialAutoCompleteTextView(this).apply {
+            setSimpleItems(options.toTypedArray())
+            setText(current, false)
+            isFocusable = false
+            setOnClickListener { showDropDown() }
+            setOnItemClickListener { _, _, pos, _ -> onSelect(pos) }
+        }
+        layout.addView(dropdown)
+        parent.addView(layout)
+        return dropdown
+    }
+
     // ============================================================
     // 文件选择
     // ============================================================
@@ -908,7 +864,7 @@ class MainActivity : AppCompatActivity() {
                         updateFallbackStatus()
                         refreshPreview()
                         Toast.makeText(this,
-                            "✔ Fallback 字体已设为 ${fallbackFontName}",
+                            "Fallback 字体已设为 ${fallbackFontName}",
                             Toast.LENGTH_SHORT).show()
                     }
                     REQ_ASCII -> { asciiChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
@@ -921,13 +877,13 @@ class MainActivity : AppCompatActivity() {
                         slotFontBytes[idx] = buf.toByteArray()
                         slotFontNames[idx] = displayName(data.data!!)
                         Toast.makeText(this,
-                            "✔ 槽位 ${SLOTS[idx].key} 将使用独立字体 ${slotFontNames[idx]}",
+                            "槽位 ${SLOTS[idx].key} 将使用独立字体 ${slotFontNames[idx]}",
                             Toast.LENGTH_SHORT).show()
                         refreshCharSummary()
                     }
                     REQ_EXPORT -> {
                         if (copyZipTo(data.data!!))
-                            Toast.makeText(this, "✔ 已导出到所选位置", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, "已导出到所选位置", Toast.LENGTH_SHORT).show()
                         else Toast.makeText(this, "导出失败", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -942,11 +898,10 @@ class MainActivity : AppCompatActivity() {
         fontLoaded = true
         fontFileName = fileName ?: ""
         cachedFontBytes = bytes
-        fontStatusText.text = "✔ $fontFileName · ${bytes.size / 1024} KB"
+        fontStatusText.text = "$fontFileName · ${bytes.size / 1024} KB"
         fontStatusText.setTextColor(colorOf(R.color.md_primary))
         if (nameInput.text.isNullOrBlank())
             nameInput.setText(fontFileName.substringBeforeLast('.'))
-        genButton.isEnabled = !isGenerating
         refreshPreview()
     }
 
@@ -994,17 +949,17 @@ class MainActivity : AppCompatActivity() {
 
         override fun onDraw(canvas: Canvas) {
             rebuildPaints()
-            mainPaint.textSize = 26f
-            fbPaint?.textSize = 26f
-            var y = dp(10) + 26
-            previewText.lines().forEach { line ->
+            mainPaint.textSize = 44f
+            fbPaint?.textSize = 44f
+            var y = dp(12) + 44
+            DEFAULT_PREVIEW_TEXT.lines().forEach { line ->
                 var x = dp(4).toFloat()
                 line.forEach { ch ->
                     val p = pickPaint(ch, mainPaint, fbPaint)
                     canvas.drawText(ch.toString(), x, y.toFloat(), p)
                     x += p.measureText(ch.toString())
                 }
-                y += 40
+                y += 62
             }
         }
     }
@@ -1124,8 +1079,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
         isGenerating = true
-        genButton.isEnabled = false
-        genButton.text = "⏳ 生成中…"
         progressIndicator.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(0, true)
         progressLabel.visibility = View.VISIBLE
@@ -1391,9 +1344,7 @@ class MainActivity : AppCompatActivity() {
         lastZipFile = zipFile
         shareBar.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(100, true)
-        genButton.isEnabled = true
-        genButton.text = "✔ 已完成"
-        Toast.makeText(this, "✔ 字体包已生成", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "字体包已生成", Toast.LENGTH_SHORT).show()
     }
 
     // ---------- 输出 ----------
@@ -1491,6 +1442,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PREFS_NAME = "tefont"
+        @Volatile
+        private var lastTab: Int = ID_TAB_GENERATE
         private const val KEY_PALETTE = "palette"
         private const val KEY_MODE = "mode"
         private const val KEY_AUTHOR = "author"
@@ -1499,8 +1452,7 @@ class MainActivity : AppCompatActivity() {
         private const val THEME_DARK = "dark"
 
         private const val PACK_INFO_ENTRY = "pack_info.json"
-        private const val DEFAULT_PREVIEW_TEXT =
-            "AaBbCcDdEeFf 0123456789 !@#%\n中文预览：天地玄黄，宇宙洪荒\nThe quick brown fox jumps over the lazy dog"
+        private const val DEFAULT_PREVIEW_TEXT = "Hello World!\n你好, 世界!"
         private const val REQ_FONT = 10
         private const val REQ_FALLBACK = 14
         private const val REQ_ASCII = 11
