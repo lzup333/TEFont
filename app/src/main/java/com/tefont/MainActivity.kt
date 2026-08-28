@@ -216,6 +216,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fontStatusText: TextView
     private lateinit var fallbackStatusText: TextView
     private lateinit var previewView: FontPreviewView
+    private lateinit var previewInput: TextInputEditText
+    private var previewText: String = DEFAULT_PREVIEW_TEXT
     private lateinit var customSection: LinearLayout
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
@@ -378,9 +380,11 @@ class MainActivity : AppCompatActivity() {
         val genColumn = wizColumn()
         val slotsColumn = wizColumn()
         val outputColumn = wizColumn().apply { setPadding(dp(20), 0, dp(20), dp(8)) }
+        val previewColumn = wizColumn().apply { setPadding(dp(20), 0, dp(20), dp(8)) }
         newWizScroll().addView(genColumn)
         newWizScroll().addView(slotsColumn)
         newWizScroll().addView(outputColumn)
+        newWizScroll().addView(previewColumn)
 
         // ── 设置页容器 ──
         val settingsPage = ScrollView(this).apply {
@@ -424,18 +428,6 @@ class MainActivity : AppCompatActivity() {
                     refreshPreview()
                     Toast.makeText(this@MainActivity, "已恢复使用系统字体作为 Fallback", Toast.LENGTH_SHORT).show()
                 })
-            })
-        })
-
-        genColumn.addView(card { add ->
-            add.addView(innerColumn {
-                addView(sectionTitle("字体预览"))
-                previewView = FontPreviewView(this@MainActivity).apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(120)
-                    ).apply { topMargin = dp(8) }
-                }
-                addView(previewView)
             })
         })
 
@@ -588,6 +580,31 @@ class MainActivity : AppCompatActivity() {
             shareBar.addView(bannerButton("💾 导出字体包到本地…", filled = false) { exportZip() })
             outputCardArea.addView(shareBar)
             add.addView(outputCardArea)
+        })
+
+        // ---------- 预览页 ----------
+
+        previewColumn.addView(card { add ->
+            val box = innerColumn()
+            box.addView(sectionTitle("预览文本"))
+            previewInput = inputField(box, "自定义预览文本（每行一段）", maxLines = 4).apply {
+                setText(DEFAULT_PREVIEW_TEXT)
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        previewText = s?.toString().orEmpty()
+                        refreshPreview()
+                    }
+                })
+            }
+            previewView = FontPreviewView(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(200)
+                ).apply { topMargin = dp(8) }
+            }
+            box.addView(previewView)
+            add.addView(box)
         })
 
         // ---------- 设置页 ----------
@@ -964,32 +981,30 @@ class MainActivity : AppCompatActivity() {
         }
 
     private inner class FontPreviewView(context: android.content.Context) : View(context) {
-        private val sampleLines = listOf(
-            "AaBbCcDdEeFf 0123456789 !@#%" to 26,
-            "中文预览：天地玄黄，宇宙洪荒" to 24,
-            "The quick brown fox jumps over the lazy dog" to 18
-        )
-        private val fbTmpPath: String?
-            get() = fallbackFontBytes?.let { materializeFont(it, "_preview_fallback.ttf") }
+        private val mainPaint = buildPaint(Typeface.DEFAULT, 26).apply { color = colorOf(R.color.md_on_surface) }
+        private var fbPaint: Paint? = null
+
+        fun rebuildPaints() {
+            val mainTf = cachedFontBytes?.let { runCatching { Typeface.createFromFile(materializeFont(it, "_preview_main.ttf")) }.getOrNull() }
+                ?: Typeface.DEFAULT
+            mainPaint.typeface = mainTf
+            val fbTf = fallbackFontBytes?.let { runCatching { Typeface.createFromFile(materializeFont(it, "_preview_fallback.ttf")) }.getOrNull() }
+            fbPaint = fbTf?.let { buildPaint(it, 26).apply { color = colorOf(R.color.md_on_surface) } }
+        }
 
         override fun onDraw(canvas: Canvas) {
-            val mainTf = cachedFontBytes?.let { Typeface.createFromFile(materializeFont(it, "_preview_main.ttf")) }
-                ?: Typeface.DEFAULT
-            val mainPaint = buildPaint(mainTf, 24).apply { color = colorOf(R.color.md_on_surface) }
-            val fbTf = fbTmpPath?.let { runCatching { Typeface.createFromFile(it) }.getOrNull() }
-            val fbPaint = fbTf?.let { buildPaint(it, 24).apply { color = colorOf(R.color.md_on_surface) } }
-
-            var y = dp(16) + 24
-            sampleLines.forEach { (text, size) ->
-                mainPaint.textSize = size.toFloat()
-                fbPaint?.textSize = size.toFloat()
+            rebuildPaints()
+            mainPaint.textSize = 26f
+            fbPaint?.textSize = 26f
+            var y = dp(10) + 26
+            previewText.lines().forEach { line ->
                 var x = dp(4).toFloat()
-                text.forEach { ch ->
+                line.forEach { ch ->
                     val p = pickPaint(ch, mainPaint, fbPaint)
                     canvas.drawText(ch.toString(), x, y.toFloat(), p)
                     x += p.measureText(ch.toString())
                 }
-                y += (size * 1.5f).toInt()
+                y += 40
             }
         }
     }
@@ -1484,6 +1499,8 @@ class MainActivity : AppCompatActivity() {
         private const val THEME_DARK = "dark"
 
         private const val PACK_INFO_ENTRY = "pack_info.json"
+        private const val DEFAULT_PREVIEW_TEXT =
+            "AaBbCcDdEeFf 0123456789 !@#%\n中文预览：天地玄黄，宇宙洪荒\nThe quick brown fox jumps over the lazy dog"
         private const val REQ_FONT = 10
         private const val REQ_FALLBACK = 14
         private const val REQ_ASCII = 11
