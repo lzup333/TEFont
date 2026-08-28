@@ -342,8 +342,8 @@ class MainActivity : AppCompatActivity() {
                     textSize = 13f
                     setTextColor(colorOf(R.color.md_on_secondary_container))
                 }
-                pill.addView(summary)
                 lines.addView(summary)
+                pill.addView(lines)
                 row.addView(pill)
                 box.addView(row)
                 slotSummaries[i] = summary
