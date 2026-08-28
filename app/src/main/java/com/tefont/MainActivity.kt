@@ -232,6 +232,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressIndicator: LinearProgressIndicator
     private lateinit var progressLabel: TextView
     private lateinit var outputCard: MaterialCardView
+    private lateinit var shareCard: MaterialCardView
     private lateinit var shareBar: LinearLayout
     private lateinit var outputCardArea: LinearLayout
 
@@ -539,7 +540,7 @@ class MainActivity : AppCompatActivity() {
             outputCardArea.addView(progressLabel)
             add.addView(outputCardArea)
         }.apply { visibility = View.GONE }
-        outputColumn.addView(outputCard)
+        previewColumn.addView(outputCard)
 
         // ---------- 预览页 ----------
 
@@ -566,17 +567,17 @@ class MainActivity : AppCompatActivity() {
             add.addView(box)
         })
 
-        previewColumn.addView(card { add ->
+        shareCard = card { add ->
             val box = innerColumn()
             shareBar = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                visibility = View.GONE
             }
             shareBar.addView(bannerButton("分享字体包 ZIP", filled = false) { lastZipFile?.let(::shareZip) })
             shareBar.addView(bannerButton("导出字体包到本地", filled = false) { exportZip() })
             box.addView(shareBar)
             add.addView(box)
-        })
+        }.apply { visibility = View.GONE }
+        previewColumn.addView(shareCard)
 
         // ---------- 设置页 ----------
 
@@ -879,6 +880,10 @@ class MainActivity : AppCompatActivity() {
                     REQ_FALLBACK -> {
                         val buf = ByteArrayOutputStream()
                         stream.copyTo(buf)
+                        if (!isValidFont(buf.toByteArray())) {
+                            Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
+                            return
+                        }
                         fallbackFontBytes = buf.toByteArray()
                         fallbackFontName = displayName(data.data!!)
                         updateFallbackStatus()
@@ -894,6 +899,10 @@ class MainActivity : AppCompatActivity() {
                         val buf = ByteArrayOutputStream()
                         stream.copyTo(buf)
                         val idx = requestCode - REQ_SLOT_FONT_BASE
+                        if (!isValidFont(buf.toByteArray())) {
+                            Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
+                            return
+                        }
                         slotFontBytes[idx] = buf.toByteArray()
                         slotFontNames[idx] = displayName(data.data!!)
                         Toast.makeText(this,
@@ -914,7 +923,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isValidFont(bytes: ByteArray): Boolean =
+        runCatching { Typeface.createFromFile(materializeFont(bytes, "_tmp_validate.ttf")) }.isSuccess
+
     private fun loadFont(bytes: ByteArray, fileName: String?) {
+        if (!isValidFont(bytes)) {
+            Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
+            return
+        }
         fontLoaded = true
         fontFileName = fileName ?: ""
         cachedFontBytes = bytes
@@ -1373,6 +1389,7 @@ class MainActivity : AppCompatActivity() {
     private fun onGenerated(zipFile: File) {
         isGenerating = false
         lastZipFile = zipFile
+        shareCard.visibility = View.VISIBLE
         shareBar.visibility = View.VISIBLE
         progressIndicator.setProgressCompat(100, true)
         Toast.makeText(this, "字体包已生成", Toast.LENGTH_SHORT).show()
