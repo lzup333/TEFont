@@ -299,7 +299,8 @@ class MainActivity : AppCompatActivity() {
                     ).apply { bottomMargin = dp(6) }
                 }
                 val pill = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
                     background = roundBg(colorOf(R.color.md_secondary_container), dp(14))
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     layoutParams = LinearLayout.LayoutParams(
@@ -307,15 +308,22 @@ class MainActivity : AppCompatActivity() {
                     )
                     setOnClickListener { showSlotEditor(i) }
                 }
-                pill.addView(LinearLayout(this@MainActivity).apply {
+                val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
+                    isChecked = true
+                    setOnCheckedChangeListener { _, _ -> updateGenButtonText() }
+                }
+                pill.addView(check)
+                slotChecks[i] = check
+
+                val lines = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                }
+                lines.addView(LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
-                        isChecked = true
-                        setOnCheckedChangeListener { _, _ -> updateGenButtonText() }
-                    }
-                    addView(check)
-                    slotChecks[i] = check
                     addView(TextView(this@MainActivity).apply {
                         text = s.key
                         textSize = 15f
@@ -335,6 +343,7 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(colorOf(R.color.md_on_secondary_container))
                 }
                 pill.addView(summary)
+                lines.addView(summary)
                 row.addView(pill)
                 box.addView(row)
                 slotSummaries[i] = summary
