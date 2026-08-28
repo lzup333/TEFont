@@ -294,12 +294,9 @@ class MainActivity : AppCompatActivity() {
                 val row = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    background = roundBg(colorOf(R.color.md_secondary_container), dp(14))
-                    setPadding(dp(14), dp(10), dp(14), dp(10))
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                     ).apply { bottomMargin = dp(6) }
-                    setOnClickListener { showSlotEditor(i) }
                 }
                 val check = com.google.android.material.checkbox.MaterialCheckBox(this@MainActivity).apply {
                     isChecked = true
@@ -307,24 +304,39 @@ class MainActivity : AppCompatActivity() {
                 }
                 row.addView(check)
                 slotChecks[i] = check
-                row.addView(TextView(this@MainActivity).apply {
-                    text = s.key
-                    textSize = 15f
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    setTextColor(colorOf(R.color.md_on_primary_container))
+
+                val pill = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = roundBg(colorOf(R.color.md_secondary_container), dp(14))
+                    setPadding(dp(14), dp(10), dp(14), dp(10))
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                    ).apply { marginStart = dp(4) }
+                    setOnClickListener { showSlotEditor(i) }
+                }
+                pill.addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(TextView(this@MainActivity).apply {
+                        text = s.key
+                        textSize = 15f
+                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                        setTextColor(colorOf(R.color.md_on_primary_container))
+                    })
+                    addView(TextView(this@MainActivity).apply {
+                        text = "✎"
+                        textSize = 16f
+                        setTextColor(colorOf(R.color.md_on_secondary_container))
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = dp(6)
+                    })
                 })
                 val summary = TextView(this@MainActivity).apply {
                     textSize = 13f
                     setTextColor(colorOf(R.color.md_on_secondary_container))
                 }
-                row.addView(summary, LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-                ).apply { marginStart = dp(10) })
-                row.addView(TextView(this@MainActivity).apply {
-                    text = "✎"
-                    textSize = 16f
-                    setTextColor(colorOf(R.color.md_on_secondary_container))
-                })
+                pill.addView(summary)
+                row.addView(pill)
                 box.addView(row)
                 slotSummaries[i] = summary
             }
