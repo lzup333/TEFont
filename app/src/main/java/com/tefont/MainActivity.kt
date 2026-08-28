@@ -217,7 +217,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var customSection: LinearLayout
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
-    private val slotFontBytes = mutableMapOf<Int, ByteArray>()
+    private val slotFontFiles = mutableMapOf<Int, String>()
     private val slotFontNames = mutableMapOf<Int, String>()
     private val slotSummaries = mutableMapOf<Int, TextView>()
     private val slotChecks = mutableMapOf<Int, com.google.android.material.checkbox.MaterialCheckBox>()
@@ -250,7 +250,7 @@ class MainActivity : AppCompatActivity() {
 
     private var fontLoaded = false
     private var fontFileName = ""
-    private var fallbackFontBytes: ByteArray? = null
+    private var fallbackFontPath: String? = null
     private var fallbackFontName: String? = null
     private var isGenerating = false
     private var lastZipFile: File? = null
@@ -399,7 +399,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 addView(fallbackStatusText)
                 addView(bannerButton("恢复系统 Fallback", filled = false) {
-                    fallbackFontBytes = null
+                    fallbackFontPath = null
                     fallbackFontName = null
                     updateFallbackStatus()
                     refreshPreview()
@@ -870,51 +870,45 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK || data?.data == null) return
         try {
-            contentResolver.openInputStream(data.data!!)?.use { stream ->
-                when (requestCode) {
-                    REQ_FONT -> {
-                        val buf = ByteArrayOutputStream()
-                        stream.copyTo(buf)
-                        loadFont(buf.toByteArray(), displayName(data.data!!))
+            when (requestCode) {
+                REQ_FONT -> loadFont(data.data!!, displayName(data.data!!))
+                REQ_FALLBACK -> {
+                    val f = copyUriToCache(data.data!!, "_tmp_fallback.ttf")
+                    if (!isValidFontFile(f)) {
+                        f.delete()
+                        Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
+                        return
                     }
-                    REQ_FALLBACK -> {
-                        val buf = ByteArrayOutputStream()
-                        stream.copyTo(buf)
-                        if (!isValidFont(buf.toByteArray())) {
-                            Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
-                            return
-                        }
-                        fallbackFontBytes = buf.toByteArray()
-                        fallbackFontName = displayName(data.data!!)
-                        updateFallbackStatus()
-                        refreshPreview()
-                        Toast.makeText(this,
-                            "Fallback 字体已设为 ${fallbackFontName}",
-                            Toast.LENGTH_SHORT).show()
+                    fallbackFontPath = f.absolutePath
+                    fallbackFontName = displayName(data.data!!)
+                    updateFallbackStatus()
+                    refreshPreview()
+                    Toast.makeText(this,
+                        "Fallback 字体已设为 ${fallbackFontName}",
+                        Toast.LENGTH_SHORT).show()
+                }
+                REQ_ASCII -> { copyUriTextTo(data.data!!, asciiChars); refreshCharSummary() }
+                REQ_DIGITS -> { copyUriTextTo(data.data!!, digitChars); refreshCharSummary() }
+                REQ_FULL -> { copyUriTextTo(data.data!!, fullChars); refreshCharSummary() }
+                in REQ_SLOT_FONT_BASE..REQ_SLOT_FONT_BASE + SLOTS.size - 1 -> {
+                    val idx = requestCode - REQ_SLOT_FONT_BASE
+                    val f = copyUriToCache(data.data!!, "_tmp_slot$idx.ttf")
+                    if (!isValidFontFile(f)) {
+                        f.delete()
+                        Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
+                        return
                     }
-                    REQ_ASCII -> { asciiChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
-                    REQ_DIGITS -> { digitChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
-                    REQ_FULL -> { fullChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
-                    in REQ_SLOT_FONT_BASE..REQ_SLOT_FONT_BASE + SLOTS.size - 1 -> {
-                        val buf = ByteArrayOutputStream()
-                        stream.copyTo(buf)
-                        val idx = requestCode - REQ_SLOT_FONT_BASE
-                        if (!isValidFont(buf.toByteArray())) {
-                            Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
-                            return
-                        }
-                        slotFontBytes[idx] = buf.toByteArray()
-                        slotFontNames[idx] = displayName(data.data!!)
-                        Toast.makeText(this,
-                            "槽位 ${SLOTS[idx].key} 将使用独立字体 ${slotFontNames[idx]}",
-                            Toast.LENGTH_SHORT).show()
-                        refreshCharSummary()
-                    }
-                    REQ_EXPORT -> {
-                        if (copyZipTo(data.data!!))
-                            Toast.makeText(this, "已导出到所选位置", Toast.LENGTH_SHORT).show()
-                        else Toast.makeText(this, "导出失败", Toast.LENGTH_SHORT).show()
-                    }
+                    slotFontFiles[idx] = f.absolutePath
+                    slotFontNames[idx] = displayName(data.data!!)
+                    Toast.makeText(this,
+                        "槽位 ${SLOTS[idx].key} 将使用独立字体 ${slotFontNames[idx]}",
+                        Toast.LENGTH_SHORT).show()
+                    refreshCharSummary()
+                }
+                REQ_EXPORT -> {
+                    if (copyZipTo(data.data!!))
+                        Toast.makeText(this, "已导出到所选位置", Toast.LENGTH_SHORT).show()
+                    else Toast.makeText(this, "导出失败", Toast.LENGTH_SHORT).show()
                 }
             }
         } catch (e: Exception) {
@@ -923,19 +917,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isValidFont(bytes: ByteArray): Boolean {
-        if (bytes.size < 12) return false
+    /** 流式复制到缓存文件，避免大文件 OOM */
+    private fun copyUriToCache(uri: Uri, fileName: String): File {
+        val f = File(cacheDir, fileName)
+        contentResolver.openInputStream(uri)!!.use { input ->
+            FileOutputStream(f).use { output -> input.copyTo(output) }
+        }
+        return f
+    }
+
+    private fun copyUriTextTo(uri: Uri, sb: StringBuilder) {
+        contentResolver.openInputStream(uri)!!.use { input ->
+            sb.clear().append(input.bufferedReader().readText())
+        }
+    }
+
+    private fun isValidFontFile(f: File): Boolean {
+        if (f.length() < 12) return false
         // sfnt 容器魔数：TrueType / OpenType(CFF) / Collection / 'true'
-        val head = bytes[0].toInt() and 0xFF or
-            ((bytes[1].toInt() and 0xFF) shl 8) or
-            ((bytes[2].toInt() and 0xFF) shl 16) or
-            ((bytes[3].toInt() and 0xFF) shl 24)
+        val head = FileInputStream(f).use { input ->
+            val b = ByteArray(4)
+            if (input.read(b) != 4) return false
+            (b[0].toInt() and 0xFF) or
+                ((b[1].toInt() and 0xFF) shl 8) or
+                ((b[2].toInt() and 0xFF) shl 16) or
+                ((b[3].toInt() and 0xFF) shl 24)
+        }
         val magicOk = head == 0x00010000 || head == 0x4F54544F /*OTTO*/ ||
             head == 0x74636674 /*ttcf*/ || head == 0x74727565 /*true*/
         if (!magicOk) return false
         // 再尝试实际解析，失败即无效
         return runCatching {
-            val tf = Typeface.createFromFile(materializeFont(bytes, "_tmp_validate.ttf"))
+            val tf = Typeface.createFromFile(f)
             val p = Paint(Paint.ANTI_ALIAS_FLAG)
             p.typeface = tf
             p.measureText("Aa1中")
@@ -943,15 +956,17 @@ class MainActivity : AppCompatActivity() {
         }.getOrDefault(false)
     }
 
-    private fun loadFont(bytes: ByteArray, fileName: String?) {
-        if (!isValidFont(bytes)) {
+    private fun loadFont(uri: Uri, fileName: String?) {
+        val f = copyUriToCache(uri, "_tmp_font.ttf")
+        if (!isValidFontFile(f)) {
+            f.delete()
             Toast.makeText(this, "选择的字体无效！", Toast.LENGTH_LONG).show()
             return
         }
         fontLoaded = true
         fontFileName = fileName ?: ""
-        cachedFontBytes = bytes
-        fontStatusText.text = "$fontFileName · ${bytes.size / 1024} KB"
+        cachedFontPath = f.absolutePath
+        fontStatusText.text = "$fontFileName · ${f.length() / 1024} KB"
         fontStatusText.setTextColor(colorOf(R.color.md_primary))
         if (nameInput.text.isNullOrBlank())
             nameInput.setText(fontFileName.substringBeforeLast('.'))
@@ -993,10 +1008,10 @@ class MainActivity : AppCompatActivity() {
         private var fbPaint: Paint? = null
 
         fun rebuildPaints() {
-            val mainTf = cachedFontBytes?.let { runCatching { Typeface.createFromFile(materializeFont(it, "_preview_main.ttf")) }.getOrNull() }
+            val mainTf = cachedFontPath?.let { runCatching { Typeface.createFromFile(it) }.getOrNull() }
                 ?: Typeface.DEFAULT
             mainPaint.typeface = mainTf
-            val fbTf = fallbackFontBytes?.let { runCatching { Typeface.createFromFile(materializeFont(it, "_preview_fallback.ttf")) }.getOrNull() }
+            val fbTf = fallbackFontPath?.let { runCatching { Typeface.createFromFile(it) }.getOrNull() }
             fbPaint = fbTf?.let { buildPaint(it, 26).apply { color = colorOf(R.color.md_on_surface) } }
         }
 
@@ -1108,7 +1123,7 @@ class MainActivity : AppCompatActivity() {
             }, REQ_SLOT_FONT_BASE + idx)
         })
         box.addView(bannerButton("恢复使用全局字体", filled = false) {
-            slotFontBytes.remove(idx)
+            slotFontFiles.remove(idx)
             slotFontNames.remove(idx)
             refreshCharSummary()
             Toast.makeText(this, "槽位 ${s.key} 已恢复全局字体", Toast.LENGTH_SHORT).show()
@@ -1254,22 +1269,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Volatile
-    private var cachedFontBytes: ByteArray? = null
-    @Volatile
     private var cachedFontPath: String? = null
-    private val materializedSlots = mutableMapOf<Int, String>()
 
-    private fun makeFontFile(): String {
-        val bytes = cachedFontBytes ?: error("字体未缓存")
-        cachedFontPath?.let { p -> if (File(p).length() == bytes.size.toLong()) return p }
-        return materializeFont(bytes, "_tmp_font.ttf").also { cachedFontPath = it }
-    }
-
-    private fun materializeFont(bytes: ByteArray, fileName: String): String {
-        val f = File(cacheDir, fileName)
-        FileOutputStream(f).use { it.write(bytes) }
-        return f.absolutePath
-    }
+    private fun makeFontFile(): String = cachedFontPath ?: error("字体未缓存")
 
     private fun doGenerate(): File {
         val t0 = System.currentTimeMillis()
@@ -1297,13 +1299,13 @@ class MainActivity : AppCompatActivity() {
             handler.post { progressLabel.text = "${slot.key} (${pos + 1}/$nTargets)…" }
 
             // 字体：槽位独立字体优先，否则全局所选字体
-            val fontPath = if (n in slotFontBytes) materializeFont(slotFontBytes[n]!!, "_tmp_slot$n.ttf")
+            val fontPath = if (n in slotFontFiles) slotFontFiles[n]!!
             else makeFontFile()
             val mainPaint = buildPaint(Typeface.createFromFile(fontPath), fs)
             // 自定义 Fallback：主字体缺字时优先使用，其次才是系统字体
-            val fbPaint = fallbackFontBytes?.let { bytes ->
+            val fbPaint = fallbackFontPath?.let { path ->
                 runCatching {
-                    buildPaint(Typeface.createFromFile(materializeFont(bytes, "_tmp_fallback.ttf")), fs)
+                    buildPaint(Typeface.createFromFile(path), fs)
                 }.getOrNull()
             }
 
@@ -1395,8 +1397,6 @@ class MainActivity : AppCompatActivity() {
             r.fntTmp.delete()
             r.pageFiles.forEach(File::delete)
         }
-        materializedSlots.values.forEach { File(it).delete() }
-        materializedSlots.clear()
 
         val dur = "%.2f".format((System.currentTimeMillis() - t0) / 1000.0)
         handler.post { progressLabel.text = "完成 · $dur s · ${results.size} 槽位" }
