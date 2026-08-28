@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -213,6 +214,8 @@ class CharRender(
 class MainActivity : AppCompatActivity() {
 
     private lateinit var fontStatusText: TextView
+    private lateinit var fallbackStatusText: TextView
+    private lateinit var previewView: FontPreviewView
     private lateinit var customSection: LinearLayout
 
     private val slotOverrides = mutableMapOf<Int, Pair<Int?, Float?>>()
@@ -253,6 +256,8 @@ class MainActivity : AppCompatActivity() {
 
     private var fontLoaded = false
     private var fontFileName = ""
+    private var fallbackFontBytes: ByteArray? = null
+    private var fallbackFontName: String? = null
     private var isGenerating = false
     private var lastZipFile: File? = null
 
@@ -402,6 +407,35 @@ class MainActivity : AppCompatActivity() {
                 }
                 addView(fontStatusText)
                 addView(bannerButton("选择字体文件 (.ttf / .otf)", filled = true) { chooseFont() })
+                addView(bannerButton("选择 Fallback 字体（可选）", filled = false) { chooseFallbackFont() })
+                fallbackStatusText = TextView(this@MainActivity).apply {
+                    text = "Fallback：系统字体（自动回退）"
+                    textSize = 12f
+                    setTextColor(colorOf(R.color.md_on_surface_variant))
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = dp(4) }
+                }
+                addView(fallbackStatusText)
+                addView(bannerButton("恢复系统 Fallback", filled = false) {
+                    fallbackFontBytes = null
+                    fallbackFontName = null
+                    updateFallbackStatus()
+                    refreshPreview()
+                    Toast.makeText(this@MainActivity, "已恢复使用系统字体作为 Fallback", Toast.LENGTH_SHORT).show()
+                })
+            })
+        })
+
+        genColumn.addView(card { add ->
+            add.addView(innerColumn {
+                addView(sectionTitle("字体预览"))
+                previewView = FontPreviewView(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(120)
+                    ).apply { topMargin = dp(8) }
+                }
+                addView(previewView)
             })
         })
 
@@ -824,6 +858,13 @@ class MainActivity : AppCompatActivity() {
         }, REQ_FONT)
     }
 
+    private fun chooseFallbackFont() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }, REQ_FALLBACK)
+    }
+
     private fun chooseTextFile(code: Int) {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -841,6 +882,17 @@ class MainActivity : AppCompatActivity() {
                         val buf = ByteArrayOutputStream()
                         stream.copyTo(buf)
                         loadFont(buf.toByteArray(), displayName(data.data!!))
+                    }
+                    REQ_FALLBACK -> {
+                        val buf = ByteArrayOutputStream()
+                        stream.copyTo(buf)
+                        fallbackFontBytes = buf.toByteArray()
+                        fallbackFontName = displayName(data.data!!)
+                        updateFallbackStatus()
+                        refreshPreview()
+                        Toast.makeText(this,
+                            "✔ Fallback 字体已设为 ${fallbackFontName}",
+                            Toast.LENGTH_SHORT).show()
                     }
                     REQ_ASCII -> { asciiChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
                     REQ_DIGITS -> { digitChars.clear().append(stream.bufferedReader().readText()); refreshCharSummary() }
@@ -878,6 +930,68 @@ class MainActivity : AppCompatActivity() {
         if (nameInput.text.isNullOrBlank())
             nameInput.setText(fontFileName.substringBeforeLast('.'))
         genButton.isEnabled = !isGenerating
+        refreshPreview()
+    }
+
+    // ---------- Fallback / 预览 ----------
+
+    private fun updateFallbackStatus() {
+        if (!this::fallbackStatusText.isInitialized) return
+        val name = fallbackFontName
+        fallbackStatusText.text = if (name != null) "Fallback：$name" else "Fallback：系统字体（自动回退）"
+        fallbackStatusText.setTextColor(
+            colorOf(if (name != null) R.color.md_primary else R.color.md_on_surface_variant)
+        )
+    }
+
+    private fun refreshPreview() {
+        if (this::previewView.isInitialized) previewView.invalidate()
+    }
+
+    /** 选字 paint：主字体缺字且 fallback 字体可渲染时用 fallback，否则用主字体（交由系统回退） */
+    private fun pickPaint(ch: Char, mainPaint: Paint, fbPaint: Paint?): Paint {
+        if (fbPaint == null) return mainPaint
+        if (Build.VERSION.SDK_INT < 23) return mainPaint
+        val s = ch.toString()
+        return if (!mainPaint.hasGlyph(s) && fbPaint.hasGlyph(s)) fbPaint else mainPaint
+    }
+
+    private fun buildPaint(typeface: Typeface, fs: Int): Paint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.typeface = typeface
+            textSize = fs.toFloat()
+            color = Color.WHITE
+        }
+
+    private inner class FontPreviewView(context: android.content.Context) : View(context) {
+        private val sampleLines = listOf(
+            "AaBbCcDdEeFf 0123456789 !@#%" to 26,
+            "中文预览：天地玄黄，宇宙洪荒" to 24,
+            "The quick brown fox jumps over the lazy dog" to 18
+        )
+        private val fbTmpPath: String?
+            get() = fallbackFontBytes?.let { materializeFont(it, "_preview_fallback.ttf") }
+
+        override fun onDraw(canvas: Canvas) {
+            val mainTf = cachedFontBytes?.let { Typeface.createFromFile(materializeFont(it, "_preview_main.ttf")) }
+                ?: Typeface.DEFAULT
+            val mainPaint = buildPaint(mainTf, 24).apply { color = colorOf(R.color.md_on_surface) }
+            val fbTf = fbTmpPath?.let { runCatching { Typeface.createFromFile(it) }.getOrNull() }
+            val fbPaint = fbTf?.let { buildPaint(it, 24).apply { color = colorOf(R.color.md_on_surface) } }
+
+            var y = dp(16) + 24
+            sampleLines.forEach { (text, size) ->
+                mainPaint.textSize = size.toFloat()
+                fbPaint?.textSize = size.toFloat()
+                var x = dp(4).toFloat()
+                text.forEach { ch ->
+                    val p = pickPaint(ch, mainPaint, fbPaint)
+                    canvas.drawText(ch.toString(), x, y.toFloat(), p)
+                    x += p.measureText(ch.toString())
+                }
+                y += (size * 1.5f).toInt()
+            }
+        }
     }
 
     // ============================================================
@@ -1153,15 +1267,17 @@ class MainActivity : AppCompatActivity() {
             // 字体：槽位独立字体优先，否则全局所选字体
             val fontPath = if (n in slotFontBytes) materializeFont(slotFontBytes[n]!!, "_tmp_slot$n.ttf")
             else makeFontFile()
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Typeface.createFromFile(fontPath)
-                textSize = fs.toFloat()
-                color = Color.WHITE
+            val mainPaint = buildPaint(Typeface.createFromFile(fontPath), fs)
+            // 自定义 Fallback：主字体缺字时优先使用，其次才是系统字体
+            val fbPaint = fallbackFontBytes?.let { bytes ->
+                runCatching {
+                    buildPaint(Typeface.createFromFile(materializeFont(bytes, "_tmp_fallback.ttf")), fs)
+                }.getOrNull()
             }
 
             val renders = mutableListOf<CharRender>()
             chars.forEachIndexed { index, ch ->
-                renderChar(ch, paint, fs)?.let { renders.add(it) }
+                renderChar(ch, pickPaint(ch, mainPaint, fbPaint), fs)?.let { renders.add(it) }
                 if ((index + 1) % 800 == 0 || index == chars.lastIndex) {
                     val p = ((pos * 90f / nTargets) + index * (50f / nTargets) / chars.size).toInt().coerceIn(0, 95)
                     handler.post {
@@ -1369,6 +1485,7 @@ class MainActivity : AppCompatActivity() {
 
         private const val PACK_INFO_ENTRY = "pack_info.json"
         private const val REQ_FONT = 10
+        private const val REQ_FALLBACK = 14
         private const val REQ_ASCII = 11
         private const val REQ_DIGITS = 12
         private const val REQ_FULL = 13
