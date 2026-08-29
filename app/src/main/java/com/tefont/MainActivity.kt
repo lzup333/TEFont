@@ -46,11 +46,11 @@ import kotlin.math.roundToInt
 data class Slot(val key: String, val label: String, val size: Int, val spacing: Float)
 
 private val SLOTS = listOf(
-    Slot("death_text", "标题字体", 46, 0.5f),
-    Slot("mouse_text", "内容字体", 22, 0.7f),
-    Slot("combat_text", "伤害字体", 18, 0.8f),
-    Slot("combat_crit", "暴击字体", 20, 0.8f),
-    Slot("item_stack", "数量字体", 14, 0.8f)
+    Slot("death_text", "标题字体", 46, 1f),
+    Slot("mouse_text", "内容字体", 22, 1f),
+    Slot("combat_text", "伤害字体", 18, 1f),
+    Slot("combat_crit", "暴击字体", 20, 1f),
+    Slot("item_stack", "数量字体", 14, 1f)
 )
 
 private fun slotRes(pos: Int): Int = when (pos) {
@@ -253,7 +253,6 @@ class MainActivity : AppCompatActivity() {
     private var fallbackFontName: String? = null
     private var isGenerating = false
     private var lastZipFile: File? = null
-
     private var useBuiltinLibs = true
     private val asciiChars = StringBuilder()
     private val digitChars = StringBuilder()
@@ -301,6 +300,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun defaultAuthor(): String = prefs.getString(KEY_AUTHOR, "").orEmpty()
+
+    private fun clearCache() {
+        if (isGenerating) {
+            Toast.makeText(this, "正在生成中，请稍后再清理", Toast.LENGTH_SHORT).show()
+            return
+        }
+        var freed = 0L
+        cacheDir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("_tmp_") || f.name.startsWith("FontPack_")) {
+                freed += f.length()
+                f.delete()
+            }
+        }
+        lastZipFile = null
+        shareCard.visibility = View.GONE
+        Toast.makeText(this, "已清理 ${freed / 1024} KB 缓存", Toast.LENGTH_SHORT).show()
+    }
 
     // ============================================================
     // UI 构建 (Material 3 · Nord Light/Dark)
@@ -490,8 +506,8 @@ class MainActivity : AppCompatActivity() {
                         setTextColor(colorOf(R.color.md_on_primary_container))
                     })
                     addView(TextView(this@MainActivity).apply {
-                        text = "✎"
-                        textSize = 16f
+                        text = s.label
+                        textSize = 13f
                         setTextColor(colorOf(R.color.md_on_secondary_container))
                     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                         marginStart = dp(6)
@@ -629,6 +645,19 @@ class MainActivity : AppCompatActivity() {
                     prefs.edit().putString(KEY_AUTHOR, s?.toString()?.trim().orEmpty()).apply()
                 }
             })
+            add.addView(box)
+        })
+
+        setColumn.addView(card { add ->
+            val box = innerColumn()
+            box.addView(sectionTitle("存储"))
+            box.addView(TextView(this@MainActivity).apply {
+                text = "生成过程中的临时字体、贴图和字体包存放在应用缓存目录，可随时清理。"
+                textSize = 13f
+                setTextColor(colorOf(R.color.md_on_surface_variant))
+                setPadding(0, dp(4), 0, 0)
+            })
+            box.addView(bannerButton("清理生成缓存", filled = false) { clearCache() })
             add.addView(box)
         })
 
